@@ -1,42 +1,71 @@
 import { createClient } from '@supabase/supabase-js';
-import { Exercise, Category, Activity, KeepFitStats, BeltLevelInfo, BELT_LEVELS } from './types';
+import { Exercise, Category, Activity, KeepFitStats, BeltLevelInfo, BELT_LEVELS, Member } from './types';
 
 // Storage Key for Local Browser Database
 const LOCAL_STORAGE_KEY = 'keepfit_db';
 
+const memberTemplates: Member[] = [
+  {
+    id: 'mem-1',
+    fullName: 'Arman Hendra Harnanda',
+    gender: 'Male',
+    beltLevel: 1, // White Belt
+    birthDate: '1978-05-12',
+    joinedDate: '2026-01-15',
+    phoneNumber: '+6281234567890',
+    height: 163,
+    weight: 99,
+    status: 'active',
+    notes: 'Praktisi Kateda Keepfit. Latihan pernapasan dada dan perut teratur untuk kebugaran fisik senior.'
+  },
+  {
+    id: 'mem-2',
+    fullName: 'Rayi Hendra Puspita',
+    gender: 'Female',
+    beltLevel: 1, // White Belt
+    birthDate: '1982-09-20',
+    joinedDate: '2026-02-10',
+    phoneNumber: '+6281987654321',
+    height: 150,
+    weight: 99,
+    status: 'active',
+    notes: 'Praktisi Kateda Keepfit wanita. Fokus pemulihan stamina mandiri dengan jurus penahanan nafas dada dasar.'
+  }
+];
+
 // Hardcoded Seed Templates matching original Kateda syllabus
 const categoryTemplates: Category[] = [
   {
-    id: 'kateda',
-    nameEN: 'Kateda Central Power',
-    nameID: 'Kekuatan Pusat Kateda',
-    descriptionEN: 'Traditional internal self-defense power, breathing, and posture training.',
-    descriptionID: 'Latihan kekuatan internal, pernapasan, dan sikap pertahanan diri tradisional.',
-    icon: 'Zap'
+    id: 'jurus',
+    nameEN: 'Jurus (Forms)',
+    nameID: 'Jurus',
+    descriptionEN: 'Defensive self-protection physical stances, central focus postures, and strike locks.',
+    descriptionID: 'Sikap fisik pertahanan diri, postur fokus pusat, dan kuncian serangan.',
+    icon: 'Shield'
   },
   {
-    id: 'strength',
-    nameEN: 'Strength Training',
-    nameID: 'Latihan Kekuatan',
-    descriptionEN: 'Building muscle, endurance, and structural power.',
-    descriptionID: 'Membangun otot, ketahanan, dan kekuatan struktural.',
+    id: 'pernapasan',
+    nameEN: 'Breathing Conditioning',
+    nameID: 'Pernapasan',
+    descriptionEN: 'Deep internal breathing, oxygen saturation optimization, and lung retention waves.',
+    descriptionID: 'Pernapasan dalam internal, optimalisasi saturasi oksigen, dan gelombang penahanan paru.',
+    icon: 'Wind'
+  },
+  {
+    id: 'exercise',
+    nameEN: 'Physical Exercises',
+    nameID: 'Exercise',
+    descriptionEN: 'Dynamic strength training, bodyweight resistance, and high energy calorie burning.',
+    descriptionID: 'Latihan kekuatan dinamis, ketahanan berat badan, dan pembakaran kalori energi tinggi.',
     icon: 'Dumbbell'
   },
   {
-    id: 'cardio',
-    nameEN: 'Cardiovascular Conditioning',
-    nameID: 'Kondisi Kardiovaskular',
-    descriptionEN: 'High-energy stamina and breathing lung efficiency.',
-    descriptionID: 'Stamina tinggi energi dan efisiensi paru-paru pernapasan.',
-    icon: 'HeartPulse'
-  },
-  {
-    id: 'mobility',
-    nameEN: 'Mobility & Flexibility',
-    nameID: 'Mobilitas & Fleksibilitas',
-    descriptionEN: 'Stretching, joint lubrication, and flow.',
-    descriptionID: 'Peregangan, lubrikasi sendi, dan aliran.',
-    icon: 'Activity'
+    id: 'isometrik',
+    nameEN: 'Isometric Tension',
+    nameID: 'Isometrik',
+    descriptionEN: 'Static muscle tensing, structural strength, bone density focus, and joint stability.',
+    descriptionID: 'Ketegangan otot statis, kekuatan struktural, fokus kepadatan tulang, dan stabilitas sendi.',
+    icon: 'Zap'
   }
 ];
 
@@ -72,6 +101,7 @@ interface InBrowserDb {
   categories: Category[];
   activities: Activity[];
   beltLevels?: BeltLevelInfo[];
+  members?: Member[];
 }
 
 function readLocalStorageDb(): InBrowserDb {
@@ -81,7 +111,8 @@ function readLocalStorageDb(): InBrowserDb {
       exercises: exerciseTemplates,
       categories: categoryTemplates,
       activities: activityTemplates,
-      beltLevels: BELT_LEVELS
+      beltLevels: BELT_LEVELS,
+      members: memberTemplates
     };
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(initial));
     return initial;
@@ -94,6 +125,22 @@ function readLocalStorageDb(): InBrowserDb {
     // Apply any missing structural validations dynamically to localized elements
     // If lists are completely empty, check if we should auto-populate them from starter templates
     const isWiped = (!db.exercises || db.exercises.length === 0) && (!db.categories || db.categories.length === 0);
+
+    const hasOldCategories = db.categories && db.categories.some(c => ['kateda', 'strength', 'cardio', 'mobility'].includes(c.id));
+    if (hasOldCategories || !db.categories || db.categories.length < 4) {
+      db.categories = categoryTemplates;
+      if (db.exercises) {
+        db.exercises = db.exercises.map(ex => {
+          let newCat = ex.category;
+          if (ex.category === 'kateda') newCat = 'jurus';
+          else if (ex.category === 'strength') newCat = 'exercise';
+          else if (ex.category === 'cardio') newCat = 'pernapasan';
+          else if (ex.category === 'mobility') newCat = 'isometrik';
+          return { ...ex, category: newCat };
+        });
+      }
+      modified = true;
+    }
 
     if (!db.exercises || !Array.isArray(db.exercises) || (isWiped && db.exercises.length === 0)) {
       db.exercises = exerciseTemplates;
@@ -111,6 +158,10 @@ function readLocalStorageDb(): InBrowserDb {
       db.beltLevels = BELT_LEVELS;
       modified = true;
     }
+    if (!db.members || !Array.isArray(db.members) || db.members.some(m => m.fullName === 'Budi Santoso')) {
+      db.members = memberTemplates;
+      modified = true;
+    }
 
     if (modified) {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(db));
@@ -122,7 +173,8 @@ function readLocalStorageDb(): InBrowserDb {
       exercises: exerciseTemplates,
       categories: categoryTemplates,
       activities: activityTemplates,
-      beltLevels: BELT_LEVELS
+      beltLevels: BELT_LEVELS,
+      members: memberTemplates
     };
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(initial));
     return initial;
@@ -134,7 +186,8 @@ export async function resetEntireDatabase(): Promise<void> {
     exercises: exerciseTemplates,
     categories: categoryTemplates,
     activities: activityTemplates,
-    beltLevels: BELT_LEVELS
+    beltLevels: BELT_LEVELS,
+    members: memberTemplates
   };
   localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(initial));
 
@@ -150,6 +203,11 @@ export async function resetEntireDatabase(): Promise<void> {
       } catch (e) {
         // Safe check
       }
+      try {
+        await supabase.from('members').delete().neq('id', 'placeholder-none');
+      } catch (e) {
+        // Safe check
+      }
 
       // Re-insert starter templates
       await supabase.from('categories').insert(categoryTemplates);
@@ -157,6 +215,11 @@ export async function resetEntireDatabase(): Promise<void> {
       await supabase.from('activities').insert(activityTemplates);
       try {
         await supabase.from('belt_levels').insert(BELT_LEVELS);
+      } catch (e) {
+        // Safe check
+      }
+      try {
+        await insertOrUpsertMembers(memberTemplates, false);
       } catch (e) {
         // Safe check
       }
@@ -177,11 +240,33 @@ export async function autoSeedSupabaseInBrowser() {
   if (!supabase) return;
 
   try {
-    const { data: catData, error: catError } = await supabase.from('categories').select('id').limit(1);
+    const { data: catData, error: catError } = await supabase.from('categories').select('id');
     
     if (catError) {
       console.warn('Unable to query Supabase categories table. Please ensure the Supabase schema exists! Error:', catError.message);
       return;
+    }
+
+    const hasOld = catData && catData.some((c: any) => ['kateda', 'strength', 'cardio', 'mobility'].includes(c.id));
+    if (hasOld) {
+      console.log('Detected old categories in Supabase, initiating clean migration...');
+      await supabase.from('categories').upsert(categoryTemplates);
+      await supabase.from('categories').delete().in('id', ['kateda', 'strength', 'cardio', 'mobility']);
+      const { data: exData } = await supabase.from('exercises').select('id,category');
+      if (exData) {
+        for (const ex of exData) {
+          let newCat = ex.category;
+          if (ex.category === 'kateda') newCat = 'jurus';
+          else if (ex.category === 'strength') newCat = 'exercise';
+          else if (ex.category === 'cardio') newCat = 'pernapasan';
+          else if (ex.category === 'mobility') newCat = 'isometrik';
+          
+          if (newCat !== ex.category) {
+            await supabase.from('exercises').update({ category: newCat }).eq('id', ex.id);
+          }
+        }
+      }
+      console.log('Supabase category migration successfully finished!');
     }
 
     if (!catData || catData.length === 0) {
@@ -199,6 +284,12 @@ export async function autoSeedSupabaseInBrowser() {
       try {
         const { error: beltSeedErr } = await supabase.from('belt_levels').insert(BELT_LEVELS);
         if (beltSeedErr) console.log('Seed message regarding belt_levels table:', beltSeedErr.message);
+      } catch (e) {
+        // Safe catch
+      }
+
+      try {
+        await insertOrUpsertMembers(memberTemplates, false);
       } catch (e) {
         // Safe catch
       }
@@ -389,22 +480,47 @@ export async function getActivities(): Promise<Activity[]> {
     }
 
     const rows = data || [];
-    return rows.map((row: any) => ({
-      id: row.id,
-      userId: row.userId,
-      userName: row.userName,
-      userAvatar: row.userAvatar,
-      exerciseId: row.exerciseId,
-      exerciseTitle: row.exerciseTitleEN || row.exerciseTitleID || '',
-      exerciseTitleEN: row.exerciseTitleEN || '',
-      exerciseTitleID: row.exerciseTitleID || '',
-      timestamp: row.timestamp,
-      duration: row.duration,
-      caloriesBurned: row.caloriesBurned,
-      status: row.status,
-      heartRateAvg: row.heartRateAvg,
-      notes: row.notes
-    })) as Activity[];
+    
+    // Dynamically resolve on-the-fly to keep the database fully normalized!
+    let membersList: Member[] = [];
+    let exercisesList: Exercise[] = [];
+    try {
+      membersList = await getMembers();
+      exercisesList = await getExercises();
+    } catch (lookupErr) {
+      console.warn('Failed to fully pre-fetch related tables for activities mapping: ', lookupErr);
+    }
+
+    return rows.map((row: any) => {
+      const uId = row.userId || row.userid || '';
+      const exId = row.exerciseId || row.exerciseid || '';
+
+      const matchingMember = membersList.find(m => m.id === uId);
+      const matchingExercise = exercisesList.find(e => e.id === exId);
+
+      // Gracefully resolve with dynamic fallback values or values already stored recursively
+      const name = matchingMember ? matchingMember.fullName : (row.userName || row.username || 'Anonymous Practitioner');
+      const avatar = matchingMember ? (matchingMember.avatar || '') : (row.userAvatar || row.useravatar || '');
+      const tEN = matchingExercise ? matchingExercise.titleEN : (row.exerciseTitleEN || row.exercisetitleen || row.exerciseTitle || row.exercisetitle || 'Exercise Activity');
+      const tID = matchingExercise ? matchingExercise.titleID : (row.exerciseTitleID || row.exercisetitleid || row.exerciseTitle || row.exercisetitle || 'Aktivitas Latihan');
+
+      return {
+        id: row.id,
+        userId: uId,
+        userName: name,
+        userAvatar: avatar,
+        exerciseId: exId,
+        exerciseTitle: tEN || tID,
+        exerciseTitleEN: tEN,
+        exerciseTitleID: tID,
+        timestamp: row.timestamp || '',
+        duration: Number(row.duration) || 0,
+        caloriesBurned: Number(row.caloriesBurned !== undefined ? row.caloriesBurned : (row.caloriesburned !== undefined ? row.caloriesburned : 0)) || 0,
+        status: row.status || 'completed',
+        heartRateAvg: row.heartRateAvg !== undefined ? Number(row.heartRateAvg) : (row.heartrateavg !== undefined ? Number(row.heartrateavg) : undefined),
+        notes: row.notes || ''
+      };
+    }) as Activity[];
   }
   return readLocalStorageDb().activities;
 }
@@ -415,11 +531,7 @@ export async function addActivity(activity: Activity): Promise<void> {
     const mappedToDb = {
       id: activity.id,
       userId: activity.userId,
-      userName: activity.userName,
-      userAvatar: activity.userAvatar,
       exerciseId: activity.exerciseId,
-      exerciseTitleEN: activity.exerciseTitleEN || activity.exerciseTitle || '',
-      exerciseTitleID: activity.exerciseTitleID || activity.exerciseTitle || '',
       timestamp: activity.timestamp,
       duration: Number(activity.duration) || 0,
       caloriesBurned: Number(activity.caloriesBurned) || 0,
@@ -617,3 +729,208 @@ setTimeout(async () => {
     await autoSeedSupabaseInBrowser();
   }
 }, 2000);
+
+// Member functions
+export async function insertOrUpsertMembers(members: Member[], isUpsert = false): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+
+  const camelCleaned = members.map(m => ({
+    id: m.id,
+    fullName: m.fullName,
+    gender: m.gender,
+    beltLevel: Number(m.beltLevel) || 1,
+    birthDate: m.birthDate,
+    joinedDate: m.joinedDate,
+    phoneNumber: m.phoneNumber || '',
+    height: Number(m.height) || 0,
+    weight: Number(m.weight) || 0,
+    status: m.status || 'active',
+    notes: m.notes || '',
+    avatar: m.avatar || ''
+  }));
+
+  // Try 1: camelCase (default)
+  let res = isUpsert 
+    ? await supabase.from('members').upsert(camelCleaned)
+    : await supabase.from('members').insert(camelCleaned);
+
+  if (res.error) {
+    console.warn(`Primary members query failed: ${res.error.message}. Trying snake_case...`);
+
+    // Try 2: snake_case
+    const snakeCleaned = camelCleaned.map((item: any) => {
+      const snakeItem: any = {};
+      for (const key of Object.keys(item)) {
+        const mappedKey = key === 'fullName' ? 'full_name' :
+                          key === 'beltLevel' ? 'belt_level' :
+                          key === 'birthDate' ? 'birth_date' :
+                          key === 'joinedDate' ? 'joined_date' :
+                          key === 'phoneNumber' ? 'phone_number' : key;
+        snakeItem[mappedKey] = item[key];
+      }
+      return snakeItem;
+    });
+
+    res = isUpsert
+      ? await supabase.from('members').upsert(snakeCleaned)
+      : await supabase.from('members').insert(snakeCleaned);
+
+    if (res.error) {
+      console.warn(`Snake_case members query failed: ${res.error.message}. Trying pure lowercase...`);
+
+      // Try 3: lowercase (unquoted column default folding in PostgreSQL)
+      const lowercaseCleaned = camelCleaned.map((item: any) => {
+        const lowercaseItem: any = {};
+        for (const key of Object.keys(item)) {
+          const mappedKey = key === 'fullName' ? 'fullname' :
+                            key === 'beltLevel' ? 'beltlevel' :
+                            key === 'birthDate' ? 'birthdate' :
+                            key === 'joinedDate' ? 'joineddate' :
+                            key === 'phoneNumber' ? 'phonenumber' : key.toLowerCase();
+          lowercaseItem[mappedKey] = item[key];
+        }
+        return lowercaseItem;
+      });
+
+      res = isUpsert
+        ? await supabase.from('members').upsert(lowercaseCleaned)
+        : await supabase.from('members').insert(lowercaseCleaned);
+
+      if (res.error) {
+        console.error(`All attempts failed to write to members table on Supabase:`, res.error);
+        throw new Error(`Supabase members writing failed: ${res.error.message}`);
+      }
+    }
+  }
+}
+
+export async function getMembers(): Promise<Member[]> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('members')
+        .select('*');
+      
+      if (!error && data) {
+        if (data.length === 0) {
+          // If Supabase table is active but totally empty, perform a real-time auto-seed with standard KeepFit starter members so the view is populated
+          console.log('Supabase members table is active but empty. Auto-populating with starter members...');
+          try {
+            await insertOrUpsertMembers(memberTemplates, false);
+            const refetched = await supabase.from('members').select('*');
+            if (!refetched.error && refetched.data && refetched.data.length > 0) {
+              const mapped = refetched.data.map((row: any) => ({
+                id: row.id,
+                fullName: row.fullName || row.full_name || row.fullname || '',
+                gender: row.gender || '',
+                beltLevel: Number(row.beltLevel !== undefined ? row.beltLevel : (row.belt_level !== undefined ? row.belt_level : (row.beltlevel !== undefined ? row.beltlevel : 1))),
+                birthDate: row.birthDate || row.birth_date || row.birthdate || '',
+                joinedDate: row.joinedDate || row.joined_date || row.joineddate || '',
+                phoneNumber: row.phoneNumber || row.phone_number || row.phonenumber || '',
+                height: Number(row.height !== undefined ? row.height : 0),
+                weight: Number(row.weight !== undefined ? row.weight : 0),
+                status: row.status || 'active',
+                notes: row.notes || '',
+                avatar: row.avatar || ''
+              }));
+              mapped.sort((a, b) => new Date(b.joinedDate).getTime() - new Date(a.joinedDate).getTime());
+              return mapped as Member[];
+            }
+          } catch (seedErr) {
+            console.warn('Failed to auto-seed empty Supabase members table, playing back LocalStorage backup:', seedErr);
+          }
+          return readLocalStorageDb().members || [];
+        }
+
+        // Map lowercase or snake_case keys back to camelCase dynamically
+        const mapped = data.map((row: any) => ({
+          id: row.id,
+          fullName: row.fullName || row.full_name || row.fullname || '',
+          gender: row.gender || '',
+          beltLevel: Number(row.beltLevel !== undefined ? row.beltLevel : (row.belt_level !== undefined ? row.belt_level : (row.beltlevel !== undefined ? row.beltlevel : 1))),
+          birthDate: row.birthDate || row.birth_date || row.birthdate || '',
+          joinedDate: row.joinedDate || row.joined_date || row.joineddate || '',
+          phoneNumber: row.phoneNumber || row.phone_number || row.phonenumber || '',
+          height: Number(row.height !== undefined ? row.height : 0),
+          weight: Number(row.weight !== undefined ? row.weight : 0),
+          status: row.status || 'active',
+          notes: row.notes || '',
+          avatar: row.avatar || ''
+        }));
+        
+        // Sort in memory to guarantee absolute reliable order without crashing on column formatting differences
+        mapped.sort((a, b) => new Date(b.joinedDate).getTime() - new Date(a.joinedDate).getTime());
+        return mapped as Member[];
+      } else if (error) {
+        console.warn('Supabase getMembers error, falling back to LocalStorage:', error.message);
+      }
+    } catch (err: any) {
+      console.warn('getMembers exception, falling back to LocalStorage:', err.message || err);
+    }
+  }
+  return readLocalStorageDb().members || [];
+}
+
+export async function saveMembers(members: Member[]): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      await insertOrUpsertMembers(members, true);
+    } catch (err) {
+      // fallback
+    }
+  }
+  const db = readLocalStorageDb();
+  db.members = members;
+  writeLocalStorageDb(db);
+}
+
+export async function addMember(member: Member): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      await insertOrUpsertMembers([member], false);
+    } catch (err) {
+      // fallback
+    }
+  }
+  const db = readLocalStorageDb();
+  if (!db.members) db.members = [];
+  db.members.unshift(member);
+  writeLocalStorageDb(db);
+}
+
+export async function updateMember(member: Member): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      await insertOrUpsertMembers([member], true);
+    } catch (err) {
+      // fallback
+    }
+  }
+  const db = readLocalStorageDb();
+  if (db.members) {
+    db.members = db.members.map(m => m.id === member.id ? member : m);
+    writeLocalStorageDb(db);
+  }
+}
+
+export async function deleteMember(id: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      await supabase.from('members').delete().eq('id', id);
+    } catch (err) {
+      // fallback
+    }
+  }
+  const db = readLocalStorageDb();
+  if (db.members) {
+    db.members = db.members.filter(m => m.id !== id);
+    writeLocalStorageDb(db);
+  }
+}
+

@@ -19,13 +19,15 @@ import {
   Layers, 
   X, 
   User, 
+  Users,
+  UserPlus,
   Database, 
   ArrowRight,
   BookOpen,
   Info,
   Menu
 } from 'lucide-react';
-import { Exercise, Category, Activity as ActivityType, KeepFitStats, BELT_LEVELS, BeltLevel, BeltLevelInfo } from './types';
+import { Exercise, Category, Activity as ActivityType, KeepFitStats, BELT_LEVELS, BeltLevel, BeltLevelInfo, Member } from './types';
 import StatsDashboard from './components/StatsDashboard';
 import DeveloperTab from './components/DeveloperTab';
 import { translations } from './locales';
@@ -37,7 +39,11 @@ import {
   saveExercises,
   addActivity,
   getBeltLevels,
-  saveBeltLevels
+  saveBeltLevels,
+  getMembers,
+  addMember,
+  updateMember,
+  deleteMember
 } from './db';
 
 export default function App() {
@@ -80,10 +86,10 @@ export default function App() {
   };
 
   // Navigation State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'exercises' | 'activities' | 'developer'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'exercises' | 'activities' | 'members' | 'developer'>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const handleTabChange = (tab: 'dashboard' | 'exercises' | 'activities' | 'developer') => {
+  const handleTabChange = (tab: 'dashboard' | 'exercises' | 'activities' | 'members' | 'developer') => {
     setActiveTab(tab);
     setIsSidebarOpen(false);
   };
@@ -93,6 +99,7 @@ export default function App() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [activities, setActivities] = useState<ActivityType[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [stats, setStats] = useState<KeepFitStats>({
     totalExercises: 0,
     totalActivities: 0,
@@ -107,17 +114,52 @@ export default function App() {
     return language === 'EN' ? cat.nameEN : cat.nameID;
   };
 
+  const getCategoryBadgeStyle = (id: string): string => {
+    switch (id) {
+      case 'jurus':
+        return 'bg-orange-950/45 text-orange-400 border border-orange-500/20';
+      case 'pernapasan':
+        return 'bg-teal-950/45 text-teal-400 border border-teal-500/20';
+      case 'exercise':
+        return 'bg-emerald-950/45 text-emerald-400 border border-emerald-500/20';
+      case 'isometrik':
+        return 'bg-indigo-950/45 text-indigo-400 border border-indigo-500/20';
+      default:
+        return 'bg-zinc-950/45 text-[#a1a1aa] border border-[#27272a]/40';
+    }
+  };
+
   // UI States
   const [loading, setLoading] = useState(true);
   const [exerciseSearch, setExerciseSearch] = useState('');
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('all');
+
+  // Members States
+  const [showMemberModal, setShowMemberModal] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [memberFilterBelt, setMemberFilterBelt] = useState<string>('all');
+  const [memberFilterStatus, setMemberFilterStatus] = useState<string>('all');
+  const [memberFormData, setMemberFormData] = useState({
+    id: undefined as string | undefined,
+    fullName: '',
+    gender: 'Male' as 'Male' | 'Female',
+    beltLevel: 1,
+    birthDate: '1998-01-01',
+    joinedDate: new Date().toISOString().split('T')[0],
+    phoneNumber: '',
+    height: 170,
+    weight: 65,
+    status: 'active' as 'active' | 'inactive',
+    notes: '',
+    avatar: undefined as string | undefined
+  });
   
   // Form States (AI components removed for client-only operation)
   const [formData, setFormData] = useState<Partial<Exercise>>({
     title: '',
-    category: 'kateda',
+    category: 'jurus',
     difficulty: 1,
     duration: 15,
     calories: 120,
@@ -174,12 +216,13 @@ export default function App() {
   const loadSystemData = async () => {
     try {
       setLoading(true);
-      const [exList, catList, actList, statTotals, beltList] = await Promise.all([
+      const [exList, catList, actList, statTotals, beltList, memberList] = await Promise.all([
         getExercises(),
         getCategories(),
         getActivities(),
         getStats(),
-        getBeltLevels()
+        getBeltLevels(),
+        getMembers()
       ]);
 
       setRawExercises(exList);
@@ -187,8 +230,9 @@ export default function App() {
       setActivities(actList);
       setStats(statTotals);
       setBeltLevels(beltList);
+      setMembers(memberList);
 
-      addLog(`Synchronized active databases. Loaded ${exList.length} exercises, ${beltList.length} belt levels, and ${actList.length} activities.`, 'success');
+      addLog(`Synchronized active databases. Loaded ${exList.length} exercises, ${beltList.length} belt levels, ${memberList.length} members, and ${actList.length} activities.`, 'success');
     } catch (e: any) {
       console.error(e);
       addLog(`Sync Failure: ${e.message || e}`, 'warn');
@@ -245,6 +289,12 @@ export default function App() {
           return;
         }
         const prevEx = currentList[index];
+        const computedMediaType = (url: string) => {
+          if (!url) return 'image';
+          if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+          if (url.endsWith('.mp4') || url.includes('.mp4?')) return 'video';
+          return 'image';
+        };
         savedElement = {
           ...prevEx,
           ...formData,
@@ -256,6 +306,7 @@ export default function App() {
           stepsID: language === 'ID' ? filteredSteps : (prevEx.stepsID || prevEx.steps || filteredSteps),
           stepDetailsEN: language === 'EN' ? (formData.stepDetails || []) : (prevEx.stepDetailsEN || prevEx.stepDetails || formData.stepDetails || []),
           stepDetailsID: language === 'ID' ? (formData.stepDetails || []) : (prevEx.stepDetailsID || prevEx.stepDetails || formData.stepDetails || []),
+          mediaType: computedMediaType(formData.mediaUrl || ''),
           updatedAt: new Date().toISOString()
         } as Exercise;
         currentList[index] = savedElement;
@@ -263,6 +314,12 @@ export default function App() {
       } else {
         // Create mode
         const exId = `ex-${Date.now()}`;
+        const computedMediaType = (url: string) => {
+          if (!url) return 'image';
+          if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+          if (url.endsWith('.mp4') || url.includes('.mp4?')) return 'video';
+          return 'image';
+        };
         savedElement = {
           id: exId,
           title: String(formData.title),
@@ -280,14 +337,14 @@ export default function App() {
           stepsID: filteredSteps,
           stepDetailsEN: formData.stepDetails || [],
           stepDetailsID: formData.stepDetails || [],
-          mediaType: formData.mediaType || 'image',
+          mediaType: computedMediaType(formData.mediaUrl || ''),
           mediaUrl: String(formData.mediaUrl || 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=800'),
           mediaSlides: formData.mediaSlides || [],
           loops: formData.loops || 5,
-          vocalGuide: formData.vocalGuide !== undefined ? formData.vocalGuide : true,
-          lungWaveD: formData.lungWaveD !== undefined ? formData.lungWaveD : true,
+          vocalGuide: true,
+          lungWaveD: true,
           targetMuscles: formData.targetMuscles || [],
-          katedaSpecific: formData.katedaSpecific || false,
+          katedaSpecific: false,
           updatedAt: new Date().toISOString()
         };
         currentList.unshift(savedElement);
@@ -318,11 +375,134 @@ export default function App() {
     }
   };
 
+  // Save member
+  const handleSaveMember = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!memberFormData.fullName.trim()) {
+      addLog('Validation failed. Member name cannot be blank.', 'warn');
+      return;
+    }
+
+    try {
+      const isEdit = !!memberFormData.id;
+      let targetMember: Member;
+
+      if (isEdit) {
+        targetMember = {
+          id: memberFormData.id!,
+          fullName: memberFormData.fullName.trim(),
+          gender: memberFormData.gender,
+          beltLevel: Number(memberFormData.beltLevel) || 1,
+          birthDate: memberFormData.birthDate,
+          joinedDate: memberFormData.joinedDate,
+          phoneNumber: memberFormData.phoneNumber || '',
+          height: Number(memberFormData.height) || 0,
+          weight: Number(memberFormData.weight) || 0,
+          status: memberFormData.status,
+          notes: memberFormData.notes || '',
+          avatar: memberFormData.avatar || undefined
+        };
+        await updateMember(targetMember);
+        addLog(`Updated Kateda practitioner profile: "${targetMember.fullName}" successfully`, 'success');
+      } else {
+        const newMemId = 'mem-' + Date.now();
+        targetMember = {
+          id: newMemId,
+          fullName: memberFormData.fullName.trim(),
+          gender: memberFormData.gender,
+          beltLevel: Number(memberFormData.beltLevel) || 1,
+          birthDate: memberFormData.birthDate,
+          joinedDate: memberFormData.joinedDate,
+          phoneNumber: memberFormData.phoneNumber || '',
+          height: Number(memberFormData.height) || 0,
+          weight: Number(memberFormData.weight) || 0,
+          status: memberFormData.status,
+          notes: memberFormData.notes || '',
+          avatar: memberFormData.avatar || undefined
+        };
+        await addMember(targetMember);
+        
+        const hM = targetMember.height / 100;
+        const computedBmi = hM > 0 ? (targetMember.weight / (hM * hM)).toFixed(1) : '0.0';
+        addLog(`Registered Kateda practitioner successfully: "${targetMember.fullName}" with automatic dynamic BMI of ${computedBmi}`, 'success');
+      }
+      
+      setShowMemberModal(false);
+      // Reset form to defaults
+      setMemberFormData({
+        id: undefined,
+        fullName: '',
+        gender: 'Male',
+        beltLevel: 1,
+        birthDate: '1998-01-01',
+        joinedDate: new Date().toISOString().split('T')[0],
+        phoneNumber: '',
+        height: 170,
+        weight: 65,
+        status: 'active',
+        notes: '',
+        avatar: undefined
+      });
+      loadSystemData();
+    } catch (err) {
+      addLog('Error writing member to DB', 'warn');
+    }
+  };
+
+  const handleEditMember = (member: Member) => {
+    setMemberFormData({
+      id: member.id,
+      fullName: member.fullName,
+      gender: member.gender,
+      beltLevel: member.beltLevel,
+      birthDate: member.birthDate,
+      joinedDate: member.joinedDate,
+      phoneNumber: member.phoneNumber || '',
+      height: member.height,
+      weight: member.weight,
+      status: member.status,
+      notes: member.notes || '',
+      avatar: member.avatar
+    });
+    setShowMemberModal(true);
+  };
+
+  const handleOpenAddMemberModal = () => {
+    setMemberFormData({
+      id: undefined,
+      fullName: '',
+      gender: 'Male',
+      beltLevel: 1,
+      birthDate: '1998-01-01',
+      joinedDate: new Date().toISOString().split('T')[0],
+      phoneNumber: '',
+      height: 170,
+      weight: 65,
+      status: 'active',
+      notes: '',
+      avatar: undefined
+    });
+    setShowMemberModal(true);
+  };
+
+  // Delete member
+  const handleDeleteMember = async (id: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to delete the member "${name}"? This is irreversible.`)) return;
+
+    try {
+      await deleteMember(id);
+      addLog(`Deleted member successfully: "${name}"`, 'success');
+      loadSystemData();
+    } catch (err) {
+      addLog('Error deleting member from DB', 'warn');
+    }
+  };
+
   // Reset exercise form
   const resetForm = () => {
     setFormData({
       title: '',
-      category: 'kateda',
+      category: 'jurus',
       difficulty: 1,
       duration: 15,
       calories: 120,
@@ -456,16 +636,26 @@ export default function App() {
           phrase = `${phrase} Loop ${loopNo}.`;
         }
       } else {
+        const isTimeBased = !stepObj.unit || stepObj.unit === 'seconds';
+        let customGoalPhrase = '';
+        if (!isTimeBased && stepObj.quantity) {
+          const unitWord = stepObj.unit === 'reps' ? 'repetitions' : 
+                          stepObj.unit === 'steps' ? 'steps' : 
+                          stepObj.unit === 'series' ? 'series' : 
+                          stepObj.unit === 'cycles' ? 'cycles' : stepObj.unit || '';
+          customGoalPhrase = `Goal: perform ${stepObj.quantity} ${unitWord}. `;
+        }
+
         if (stepObj.type === 'inhale') {
-          phrase = `Inhale. Loop ${loopNo}. ${stepObj.hint || 'Breathe in slowly.'}`;
+          phrase = `Inhale. Loop ${loopNo}. ${customGoalPhrase}${stepObj.hint || 'Breathe in slowly.'}`;
         } else if (stepObj.type === 'hold') {
-          phrase = `Hold. ${stepObj.hint || 'Lock breath and tense core.'}`;
+          phrase = `Hold. ${customGoalPhrase}${stepObj.hint || 'Lock breath and tense core.'}`;
         } else if (stepObj.type === 'exhale') {
-          phrase = `Exhale. ${stepObj.hint || 'Breathe out hard.'}`;
+          phrase = `Exhale. ${customGoalPhrase}${stepObj.hint || 'Breathe out hard.'}`;
         } else if (stepObj.type === 'rest') {
-          phrase = `Rest. ${stepObj.hint || 'Breath rest.'}`;
+          phrase = `Rest. ${customGoalPhrase}${stepObj.hint || 'Breath rest.'}`;
         } else {
-          phrase = `${stepObj.text}. ${stepObj.hint || ''}`;
+          phrase = `${customGoalPhrase}${stepObj.text}. ${stepObj.hint || ''}`;
         }
       }
       
@@ -500,8 +690,11 @@ export default function App() {
     setIsPlaying(true);
     setActiveStepIdx(0);
     setActiveLoopCount(1);
-    setSecondsLeft(details[0].duration || 15);
-    speakCurrentStep(details[0], 1);
+    
+    const firstStep = details[0];
+    const isFirstTimeBased = !firstStep || !firstStep.unit || firstStep.unit === 'seconds';
+    setSecondsLeft(isFirstTimeBased ? (firstStep.duration || 15) : 0);
+    speakCurrentStep(firstStep, 1);
   };
 
   const simulateCompletedPractice = async () => {
@@ -549,7 +742,8 @@ export default function App() {
         setActiveStepIdx(firstBreatheIdx);
         setActiveLoopCount(prev => prev + 1);
         const nextStep = details[firstBreatheIdx];
-        setSecondsLeft(nextStep.duration || 15);
+        const isNextStepTimeBased = !nextStep || !nextStep.unit || nextStep.unit === 'seconds';
+        setSecondsLeft(isNextStepTimeBased ? (nextStep.duration || 15) : 0);
         speakCurrentStep(nextStep, activeLoopCount + 1);
         return;
       }
@@ -559,7 +753,8 @@ export default function App() {
       const nextIdx = activeStepIdx + 1;
       setActiveStepIdx(nextIdx);
       const nextStep = details[nextIdx];
-      setSecondsLeft(nextStep.duration || 15);
+      const isNextStepTimeBased = !nextStep || !nextStep.unit || nextStep.unit === 'seconds';
+      setSecondsLeft(isNextStepTimeBased ? (nextStep.duration || 15) : 0);
       speakCurrentStep(nextStep, activeLoopCount);
     } else {
       setPracticeActive(false);
@@ -574,13 +769,22 @@ export default function App() {
     let timerId: any = null;
     if (practiceActive && isPlaying) {
       timerId = setInterval(() => {
-        setSecondsLeft(prev => {
-          if (prev <= 1) {
-            handleStepCompletion();
-            return 0;
-          }
-          return prev - 1;
-        });
+        const details = selectedExercise?.stepDetails || [];
+        const currentStep = details[activeStepIdx];
+        const isTimeBased = !currentStep || !currentStep.unit || currentStep.unit === 'seconds';
+
+        if (isTimeBased) {
+          setSecondsLeft(prev => {
+            if (prev <= 1) {
+              handleStepCompletion();
+              return 0;
+            }
+            return prev - 1;
+          });
+        } else {
+          // Count up elapsed seconds spent on this step
+          setSecondsLeft(prev => prev + 1);
+        }
       }, 1000);
     } else {
       clearInterval(timerId);
@@ -640,6 +844,19 @@ export default function App() {
     return ex.category === activeCategoryFilter && matchesSearch;
   });
 
+  // Filter members
+  const filteredMembers = members.filter(m => {
+    const searchLower = memberSearch.toLowerCase();
+    const matchesSearch = m.fullName.toLowerCase().includes(searchLower) || 
+                          (m.phoneNumber && m.phoneNumber.toLowerCase().includes(searchLower)) || 
+                          (m.notes && m.notes.toLowerCase().includes(searchLower));
+
+    const matchesBelt = memberFilterBelt === 'all' || m.beltLevel === Number(memberFilterBelt);
+    const matchesStatus = memberFilterStatus === 'all' || m.status === memberFilterStatus;
+
+    return matchesSearch && matchesBelt && matchesStatus;
+  });
+
   return (
     <div className="flex min-h-screen bg-[#09090b] text-[#fafafa] font-sans antialiased selection:bg-emerald-500/30 selection:text-emerald-200" id="main-admin-app">
       
@@ -689,6 +906,15 @@ export default function App() {
           >
             <Activity className="w-5 h-5 opacity-80" />
             <span>{t.activities}</span>
+          </button>
+
+          <button 
+            onClick={() => handleTabChange('members')} 
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeTab === 'members' ? 'bg-[#27272a] text-white shadow-xs' : 'text-[#a1a1aa] hover:bg-[#18181b] hover:text-white'}`}
+            id="nav-tab-members"
+          >
+            <Users className="w-5 h-5 opacity-80" />
+            <span>{t.members}</span>
           </button>
 
           <button 
@@ -750,12 +976,14 @@ export default function App() {
                 {activeTab === 'dashboard' && t.adminTitle}
                 {activeTab === 'exercises' && t.exercises}
                 {activeTab === 'activities' && t.deviceSyncTitle}
+                {activeTab === 'members' && t.members}
                 {activeTab === 'developer' && t.interactiveRest}
               </h2>
               <p className="sidebar-subtext text-[10px] sm:text-xs text-[#a1a1aa] hidden sm:block truncate max-w-xs sm:max-w-md">
                 {activeTab === 'dashboard' && t.adminSubtitle}
                 {activeTab === 'exercises' && t.exercisesSubtitle}
                 {activeTab === 'activities' && t.activitiesSubtitle}
+                {activeTab === 'members' && t.membersSubtitle}
                 {activeTab === 'developer' && t.developerSubtitle}
               </p>
             </div>
@@ -884,13 +1112,11 @@ export default function App() {
                             <td className="py-3 px-4">
                               <span className="text-white block font-semibold">{ex.title}</span>
                               <span className="text-[9px] text-[#a1a1aa] uppercase tracking-wider font-mono">
-                                {ex.katedaSpecific ? '⚡ OFFICIAL KATEDA TECHNIQUE' : 'KEEP_FIT STANDARD'}
+                                ID: {ex.id}
                               </span>
                             </td>
                             <td className="py-3 px-4">
-                              <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider ${
-                                ex.category === 'kateda' ? 'bg-orange-950/40 text-orange-400 border border-orange-500/20' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/10'
-                              }`}>
+                              <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider ${getCategoryBadgeStyle(ex.category)}`}>
                                 {getCategoryName(ex.category)}
                               </span>
                             </td>
@@ -933,11 +1159,17 @@ export default function App() {
                   <div className="flex-1 space-y-4 max-h-56 overflow-y-auto scrollbar-none mb-4 pr-1">
                     {activities.slice(0, 4).map((act) => (
                       <div key={act.id} className="flex gap-3 border-b border-[#27272a]/20 pb-3 last:border-0 last:pb-0 font-medium">
-                        <img 
-                          src={act.userAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=facearea&facepad=2&w=128&h=128&q=80"}
-                          alt={act.userName}
-                          className="w-8 h-8 rounded-full border border-[#27272a] shrink-0 object-cover mt-0.5"
-                        />
+                        {act.userAvatar ? (
+                          <img 
+                            src={act.userAvatar}
+                            alt={act.userName}
+                            className="w-8 h-8 rounded-full border border-[#27272a] shrink-0 object-cover mt-0.5"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-neutral-800 text-white font-semibold text-xs border border-zinc-700 select-none flex items-center justify-center shrink-0 mt-0.5">
+                            {(act.userName || 'A').charAt(0).toUpperCase()}
+                          </div>
+                        )}
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-white leading-tight font-bold truncate">
                             {act.userName} <span className="font-normal text-[#a1a1aa]">completed</span>
@@ -1002,7 +1234,7 @@ export default function App() {
                   className="bg-[#27272a] hover:bg-[#27272a]/80 text-emerald-400 border border-emerald-500/10 text-xs px-3.5 py-1.5 rounded-xl transition-all font-semibold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>New Custom Workout</span>
+                  <span>New Workout</span>
                 </button>
               </div>
 
@@ -1048,11 +1280,6 @@ export default function App() {
                             <td className="px-6 py-4">
                               <div className="font-bold text-white text-base leading-tight flex items-center gap-2">
                                 {ex.title}
-                                {ex.katedaSpecific && (
-                                  <span className="px-1.5 py-0.5 bg-orange-950/60 border border-orange-500/20 text-orange-400 rounded text-[8px] font-mono tracking-widest font-black uppercase">
-                                    KATEDA PUSAT
-                                  </span>
-                                )}
                               </div>
                               <p className="text-xs text-[#a1a1aa] line-clamp-2 mt-1 font-medium">{ex.description}</p>
                               <div className="flex gap-1.5 mt-2 flex-wrap">
@@ -1067,9 +1294,7 @@ export default function App() {
                               {ex.steps.length} steps
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-widest ${
-                                ex.category === 'kateda' ? 'bg-orange-950/45 text-orange-400 border border-orange-500/20' : 'bg-emerald-950/45 text-emerald-400 border border-emerald-500/20'
-                              }`}>
+                              <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-widest ${getCategoryBadgeStyle(ex.category)}`}>
                                 {getCategoryName(ex.category)}
                               </span>
                             </td>
@@ -1127,15 +1352,8 @@ export default function App() {
                               <h4 className="text-white font-bold leading-tight text-sm">
                                 {ex.title}
                               </h4>
-                              {ex.katedaSpecific && (
-                                <span className="inline-block px-1.5 py-0.5 bg-orange-950/60 border border-orange-500/20 text-orange-400 rounded text-[8px] font-mono font-bold tracking-widest uppercase">
-                                  KATEDA PUSAT
-                                </span>
-                              )}
                             </div>
-                            <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-widest shrink-0 ${
-                              ex.category === 'kateda' ? 'bg-orange-950/45 text-orange-400 border border-orange-500/20' : 'bg-emerald-950/45 text-emerald-400 border border-emerald-500/20'
-                            }`}>
+                            <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-widest shrink-0 ${getCategoryBadgeStyle(ex.category)}`}>
                               {getCategoryName(ex.category)}
                             </span>
                           </div>
@@ -1378,21 +1596,39 @@ export default function App() {
                                 </p>
                               )}
 
-                              {/* Countdown display */}
-                              <div className="pt-2 flex items-center justify-center">
-                                <div className="relative w-20 h-20 flex items-center justify-center rounded-full border-4 border-zinc-800 bg-zinc-950/50 shadow-inner">
-                                  {/* Pulsing visual core layer */}
-                                  <div className={`absolute inset-1 rounded-full border border-emerald-500/10 transition-all ${
-                                    isPlaying ? 'animate-pulse scale-105 bg-emerald-500/[0.02]' : ''
-                                  }`} />
-                                  <div className="text-center">
-                                    <span className="block text-xl font-bold font-mono text-white leading-none">
-                                      {String(secondsLeft).padStart(2, '0')}
-                                    </span>
-                                    <span className="text-[8px] font-mono text-[#a1a1aa] tracking-widest font-bold">SEC LEFT</span>
+                              {/* Countdown or Target Counter display */}
+                              {(() => {
+                                const currentStep = selectedExercise.stepDetails?.[activeStepIdx];
+                                const isTimeBased = !currentStep || !currentStep.unit || currentStep.unit === 'seconds';
+                                
+                                return (
+                                  <div className="pt-2 flex flex-col items-center justify-center space-y-2.5">
+                                    <div className="relative w-23 h-23 flex items-center justify-center rounded-full border-4 border-zinc-800 bg-zinc-950/50 shadow-inner">
+                                      {/* Pulsing visual core layer */}
+                                      <div className={`absolute inset-1 rounded-full border border-emerald-500/10 transition-all ${
+                                        isPlaying && practiceActive ? 'animate-pulse scale-105 bg-emerald-500/[0.02]' : ''
+                                      }`} />
+                                      <div className="text-center">
+                                        <span className="block text-xl font-bold font-mono text-white leading-none">
+                                          {String(secondsLeft).padStart(2, '0')}
+                                        </span>
+                                        <span className="text-[7.5px] font-mono text-[#a1a1aa] tracking-widest font-black uppercase mt-1 block">
+                                          {isTimeBased ? 'SEC LEFT' : 'ELAPSED'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    
+                                    {/* Non-seconds target badge */}
+                                    {!isTimeBased && currentStep && (
+                                      <div className="animate-fadeIn font-mono text-[9px] font-bold text-white bg-emerald-950/80 border border-emerald-500/25 px-2.5 py-0.5 rounded-full uppercase tracking-widest flex items-center gap-1">
+                                        <span>GOAL:</span>
+                                        <span className="text-emerald-400 font-extrabold">{currentStep.quantity || 10}</span>
+                                        <span className="text-[#a1a1aa]">{currentStep.unit}</span>
+                                      </div>
+                                    )}
                                   </div>
-                                </div>
-                              </div>
+                                );
+                              })()}
 
                               {/* Step Type badge display */}
                               <div className="flex justify-center pt-1">
@@ -1453,42 +1689,80 @@ export default function App() {
                                   </div>
                                 </div>
                               )}
-                            </div>
+                                                    {/* Runner control buttons */}
+                            {(() => {
+                              const currentStep = selectedExercise.stepDetails?.[activeStepIdx];
+                              const isTimeBased = !currentStep || !currentStep.unit || currentStep.unit === 'seconds';
 
-                            {/* Runner control buttons */}
-                            <div className="flex gap-2 text-[11px]">
-                              <button 
-                                onClick={() => {
-                                  if (activeStepIdx > 0) {
-                                    const prevIdx = activeStepIdx - 1;
-                                    setActiveStepIdx(prevIdx);
-                                    const details = selectedExercise.stepDetails || [];
-                                    setSecondsLeft(details[prevIdx].duration || 15);
-                                    speakCurrentStep(details[prevIdx], activeLoopCount);
-                                  }
-                                }}
-                                disabled={activeStepIdx === 0}
-                                className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-[#a1a1aa] hover:text-white border border-[#27272a] rounded-xl py-1.5 font-bold transition-colors disabled:opacity-50"
-                              >
-                                Prev
-                              </button>
+                              if (isTimeBased) {
+                                return (
+                                  <div className="flex gap-2 text-[11px]">
+                                    <button 
+                                      onClick={() => {
+                                        if (activeStepIdx > 0) {
+                                          const prevIdx = activeStepIdx - 1;
+                                          setActiveStepIdx(prevIdx);
+                                          const details = selectedExercise.stepDetails || [];
+                                          const nextStep = details[prevIdx];
+                                          const isNextTimeBased = !nextStep || !nextStep.unit || nextStep.unit === 'seconds';
+                                          setSecondsLeft(isNextTimeBased ? (nextStep.duration || 15) : 0);
+                                          speakCurrentStep(nextStep, activeLoopCount);
+                                        }
+                                      }}
+                                      disabled={activeStepIdx === 0}
+                                      className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-[#a1a1aa] hover:text-white border border-[#27272a] rounded-xl py-1.5 font-bold transition-colors disabled:opacity-50"
+                                    >
+                                      Prev
+                                    </button>
 
-                              <button 
-                                onClick={() => setIsPlaying(!isPlaying)}
-                                className={`flex-1 rounded-xl py-1.5 font-bold transition-colors ${
-                                  isPlaying ? 'bg-zinc-800 hover:bg-zinc-700 text-white border border-[#3f3f46]' : 'bg-emerald-500 hover:bg-emerald-400 text-black'
-                                }`}
-                              >
-                                {isPlaying ? '⏸️ Pause' : '▶️ Resume'}
-                              </button>
+                                    <button 
+                                      onClick={() => setIsPlaying(!isPlaying)}
+                                      className={`flex-1 rounded-xl py-1.5 font-bold transition-colors ${
+                                        isPlaying ? 'bg-zinc-800 hover:bg-zinc-700 text-white border border-[#3f3f46]' : 'bg-emerald-500 hover:bg-emerald-400 text-black'
+                                      }`}
+                                    >
+                                      {isPlaying ? '⏸️ Pause' : '▶️ Resume'}
+                                    </button>
 
-                              <button 
-                                onClick={handleStepCompletion}
-                                className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-[#a1a1aa] hover:text-white border border-[#27272a] rounded-xl py-1.5 font-bold transition-colors"
-                              >
-                                Skip
-                              </button>
-                            </div>
+                                    <button 
+                                      onClick={handleStepCompletion}
+                                      className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-[#a1a1aa] hover:text-white border border-[#27272a] rounded-xl py-1.5 font-bold transition-colors"
+                                    >
+                                      Skip
+                                    </button>
+                                  </div>
+                                );
+                              } else {
+                                return (
+                                  <div className="flex gap-2 text-[11px]">
+                                    <button 
+                                      onClick={() => {
+                                        if (activeStepIdx > 0) {
+                                          const prevIdx = activeStepIdx - 1;
+                                          setActiveStepIdx(prevIdx);
+                                          const details = selectedExercise.stepDetails || [];
+                                          const nextStep = details[prevIdx];
+                                          const isNextTimeBased = !nextStep || !nextStep.unit || nextStep.unit === 'seconds';
+                                          setSecondsLeft(isNextTimeBased ? (nextStep.duration || 15) : 0);
+                                          speakCurrentStep(nextStep, activeLoopCount);
+                                        }
+                                      }}
+                                      disabled={activeStepIdx === 0}
+                                      className="w-1/4 bg-zinc-900 hover:bg-zinc-800 text-[#a1a1aa] hover:text-white border border-[#27272a] rounded-xl py-1.5 font-bold transition-colors disabled:opacity-50"
+                                    >
+                                      Prev
+                                    </button>
+
+                                    <button 
+                                      onClick={handleStepCompletion}
+                                      className="w-3/4 bg-emerald-500 hover:bg-emerald-400 text-black font-black uppercase tracking-wider rounded-xl py-1.5 font-mono shadow-md shadow-emerald-500/10 flex items-center justify-center gap-1.5 transition-all text-xs cursor-pointer"
+                                    >
+                                      <span>✅ COMPLETE STEP</span>
+                                    </button>
+                                  </div>
+                                );
+                              }
+                            })()}              </div>
 
                             <button 
                               onClick={() => {
@@ -1750,11 +2024,17 @@ export default function App() {
                           <tr key={act.id} className="hover:bg-zinc-800/10 font-medium">
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-2.5">
-                                <img 
-                                  src={act.userAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=facearea&facepad=2&w=128&h=128&q=80"}
-                                  alt={act.userName}
-                                  className="w-8 h-8 rounded-full border border-[#27272a] object-cover"
-                                />
+                                {act.userAvatar ? (
+                                  <img 
+                                    src={act.userAvatar}
+                                    alt={act.userName}
+                                    className="w-8 h-8 rounded-full border border-[#27272a] object-cover"
+                                  />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-full bg-neutral-800 text-white font-semibold text-[10px] border border-zinc-700 select-none flex items-center justify-center shrink-0">
+                                    {(act.userName || 'A').charAt(0).toUpperCase()}
+                                  </div>
+                                )}
                                 <div className="min-w-0">
                                   <p className="text-white font-bold leading-tight truncate">{act.userName}</p>
                                   <p className="text-[9px] text-[#a1a1aa] font-mono tracking-wider font-semibold uppercase">{act.userId}</p>
@@ -1787,6 +2067,574 @@ export default function App() {
                   </div>
                 </div>
 
+              </div>
+            </div>
+          )}
+
+          {!loading && activeTab === 'members' && (
+            <div className="space-y-6 animate-fadeIn p-4 sm:p-8" id="view-members">
+              {/* Member Metric Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="member-metrics-grid">
+                <div className="bg-[#18181b] border border-[#27272a] p-5 rounded-2xl flex items-center justify-between shadow-xs">
+                  <div>
+                    <p className="text-xs text-[#a1a1aa] font-medium font-sans uppercase tracking-wider">
+                      {language === 'EN' ? 'Total Members' : 'Total Anggota'}
+                    </p>
+                    <h3 className="text-2xl font-bold text-white font-sans mt-1">{members.length}</h3>
+                  </div>
+                  <div className="w-10 h-10 bg-emerald-950/35 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-500/10">
+                    <Users className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-[#18181b] border border-[#27272a] p-5 rounded-2xl flex items-center justify-between shadow-xs">
+                  <div>
+                    <p className="text-xs text-[#a1a1aa] font-medium font-sans uppercase tracking-wider">
+                      {language === 'EN' ? 'Active Practitioners' : 'Praktisi Aktif'}
+                    </p>
+                    <h3 className="text-2xl font-bold text-emerald-400 font-sans mt-1">
+                      {members.filter(m => m.status === 'active').length}
+                    </h3>
+                  </div>
+                  <div className="w-10 h-10 bg-emerald-950/35 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-500/10">
+                    <Check className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-[#18181b] border border-[#27272a] p-5 rounded-2xl flex items-center justify-between shadow-xs">
+                  <div>
+                    <p className="text-xs text-[#a1a1aa] font-medium font-sans uppercase tracking-wider">
+                      {language === 'EN' ? 'Average BMI Scale' : 'Rata-rata Skala BMI'}
+                    </p>
+                    <h3 className="text-2xl font-bold text-white font-sans mt-1">
+                      {members.length > 0 
+                        ? (members.reduce((sum, m) => {
+                            const h = m.height / 100;
+                            const bmi = h > 0 ? (m.weight / (h * h)) : 0;
+                            return sum + bmi;
+                          }, 0) / members.length).toFixed(1)
+                        : '0.0'
+                      }
+                    </h3>
+                  </div>
+                  <div className="w-10 h-10 bg-indigo-950/35 text-indigo-400 rounded-xl flex items-center justify-center border border-indigo-500/10">
+                    <Layers className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-[#18181b] border border-[#27272a] p-5 rounded-2xl flex items-center justify-between shadow-xs">
+                  <div>
+                    <p className="text-xs text-[#a1a1aa] font-medium font-sans uppercase tracking-wider">
+                      {language === 'EN' ? 'Optimal BMI Ratio' : 'Rasio BMI Optimal (18.5-24.9)'}
+                    </p>
+                    <h3 className="text-2xl font-semibold text-emerald-400 font-sans mt-1">
+                      {members.length > 0
+                        ? `${((members.filter(m => {
+                            const h = m.height / 100;
+                            const bmi = h > 0 ? (m.weight / (h * h)) : 0;
+                            return bmi >= 18.5 && bmi <= 24.9;
+                          }).length / members.length) * 100).toFixed(0)}%`
+                        : '0%'
+                      }
+                    </h3>
+                  </div>
+                  <div className="w-10 h-10 bg-teal-950/35 text-teal-400 rounded-xl flex items-center justify-center border border-teal-500/10">
+                    <HeartPulse className="w-5 h-5" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Filtering and Actions Bar */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#121214] border border-[#27272a] p-4 rounded-2xl" id="members-filter-controls">
+                <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:max-w-xl">
+                  {/* Search Bar */}
+                  <div className="relative w-full">
+                    <Search className="absolute left-3.5 top-2.5 h-4.5 w-4.5 text-[#a1a1aa]" />
+                    <input 
+                      type="text"
+                      className="w-full bg-[#09090b] border border-[#27272a] rounded-xl pl-10 pr-4 py-2 text-xs text-white focus:outline-none focus:border-emerald-500" 
+                      placeholder={language === 'EN' ? "Search by name or contact..." : "Cari berdasarkan nama atau kontak..."}
+                      value={memberSearch}
+                      onChange={(e) => setMemberSearch(e.target.value)}
+                      id="member-search-input"
+                    />
+                  </div>
+
+                  {/* Belt Filter */}
+                  <select
+                    className="w-full sm:w-48 bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-[#fafafa] focus:outline-none focus:border-emerald-500"
+                    value={memberFilterBelt}
+                    onChange={(e) => setMemberFilterBelt(e.target.value)}
+                    id="member-filter-belt"
+                  >
+                    <option value="all">{language === 'EN' ? 'All Belts' : 'Semua Sabuk'}</option>
+                    {beltLevels.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {language === 'EN' ? b.nameEN : b.nameID}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Status Filter */}
+                  <select
+                    className="w-full sm:w-40 bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-[#fafafa] focus:outline-none focus:border-emerald-500"
+                    value={memberFilterStatus}
+                    onChange={(e) => setMemberFilterStatus(e.target.value)}
+                    id="member-filter-status"
+                  >
+                    <option value="all">{language === 'EN' ? 'All Status' : 'Semua Status'}</option>
+                    <option value="active">{language === 'EN' ? 'Active' : 'Aktif'}</option>
+                    <option value="inactive">{language === 'EN' ? 'Inactive' : 'Nonaktif'}</option>
+                  </select>
+                </div>
+
+                {/* Add Member CTA */}
+                <button
+                  onClick={handleOpenAddMemberModal}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-2 shrink-0 self-stretch sm:self-auto shadow-md shadow-emerald-600/10"
+                  id="btn-trigger-register-member"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{language === 'EN' ? 'Register Member' : 'Daftar Anggota Baru'}</span>
+                </button>
+              </div>
+
+              {/* Members List Table Container */}
+              <div className="bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden shadow-sm" id="members-list-container">
+                <div className="overflow-x-auto min-w-full">
+                  <table className="min-w-full divide-y divide-[#27272a]">
+                    <thead className="bg-[#18181b]">
+                      <tr>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider">{language === 'EN' ? 'Practitioner' : 'Praktisi'}</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider">{language === 'EN' ? 'Belt Level' : 'Tingkatan Sabuk'}</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider">{language === 'EN' ? 'Joined' : 'Bergabung'}</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider">{language === 'EN' ? 'Body Dimensions' : 'Dimensi Fisik'}</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider">BMI</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider">{language === 'EN' ? 'Status' : 'Status'}</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-[#a1a1aa] uppercase tracking-wider">{language === 'EN' ? 'Actions' : 'Tindakan'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#27272a]/60 bg-[#121214]" id="members-table-body">
+                      {filteredMembers.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="px-6 py-12 text-center text-[#a1a1aa] text-xs font-sans">
+                            {language === 'EN' 
+                              ? 'No members registered yet matching search filters.' 
+                              : 'Belum ada anggota terdaftar yang cocok dengan filter pencarian.'
+                            }
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredMembers.map(member => {
+                          const matchingBelt = beltLevels.find(b => b.id === member.beltLevel) || BELT_LEVELS[0];
+                          const beltName = language === 'EN' ? matchingBelt.nameEN : matchingBelt.nameID;
+                          const yearsOld = new Date().getFullYear() - new Date(member.birthDate).getFullYear();
+                          
+                          // Dynamic BMI calculation on the fly
+                          const hM = member.height / 100;
+                          const computedBmi = hM > 0 ? (member.weight / (hM * hM)) : 0;
+                          
+                          // BMI evaluation
+                          let bmiColor = 'bg-emerald-950/45 text-emerald-400 border border-emerald-500/20';
+                          let bmiTag = language === 'EN' ? 'Normal' : 'Normal';
+                          if (computedBmi < 18.5) {
+                            bmiColor = 'bg-blue-950/45 text-blue-400 border border-blue-500/10';
+                            bmiTag = language === 'EN' ? 'Underweight' : 'Kurus';
+                          } else if (computedBmi >= 25.0 && computedBmi <= 29.9) {
+                            bmiColor = 'bg-amber-950/45 text-amber-400 border border-amber-500/10';
+                            bmiTag = language === 'EN' ? 'Overweight' : 'Gemuk';
+                          } else if (computedBmi >= 30.0) {
+                            bmiColor = 'bg-red-950/45 text-red-400 border border-red-500/20';
+                            bmiTag = language === 'EN' ? 'Obese' : 'Obesitas';
+                          }
+
+                          return (
+                            <tr key={member.id} className="hover:bg-[#18181b]/30 transition-colors" id={`row-member-${member.id}`}>
+                              {/* Practitioner Profile card */}
+                              <td className="px-6 py-4.5 whitespace-nowrap">
+                                <div className="flex items-center gap-3">
+                                  {member.avatar ? (
+                                    <img 
+                                      src={member.avatar} 
+                                      alt={member.fullName} 
+                                      className="w-9 h-9 rounded-full border border-[#27272a] object-cover" 
+                                    />
+                                  ) : (
+                                    <div className="w-9 h-9 bg-neutral-800 rounded-full flex items-center justify-center text-white font-semibold text-xs border border-zinc-700 select-none">
+                                      {member.fullName.charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
+                                  <div>
+                                    <div className="text-sm font-semibold text-white font-sans">{member.fullName}</div>
+                                    <div className="text-[10px] text-[#a1a1aa] font-medium flex items-center gap-1.5 mt-0.5">
+                                      <span>{member.gender === 'Male' ? (language === 'EN' ? 'Male' : 'Pria') : (language === 'EN' ? 'Female' : 'Wanita')}</span>
+                                      <span>•</span>
+                                      <span>{yearsOld} y/o</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Belt Rank */}
+                              <td className="px-6 py-4.5 whitespace-nowrap">
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold tracking-wider border ${matchingBelt.color || 'bg-white/10 text-white'}`}>
+                                  {beltName}
+                                </span>
+                              </td>
+
+                              {/* Join Date */}
+                              <td className="px-6 py-4.5 whitespace-nowrap text-xs text-[#a1a1aa] font-sans">
+                                {new Date(member.joinedDate).toLocaleDateString(language === 'EN' ? 'en-US' : 'id-ID', {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric'
+                                })}
+                              </td>
+
+                              {/* Physical Body Coordinates */}
+                              <td className="px-6 py-4.5 whitespace-nowrap">
+                                <span className="text-xs text-zinc-350 font-mono">
+                                  {member.height} cm / {member.weight} kg
+                                </span>
+                              </td>
+
+                              {/* Body BMI */}
+                              <td className="px-6 py-4.5 whitespace-nowrap text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-white font-mono">{computedBmi.toFixed(1)}</span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase tracking-widest font-extrabold ${bmiColor}`}>
+                                    {bmiTag}
+                                  </span>
+                                </div>
+                              </td>
+
+                              {/* Online Status */}
+                              <td className="px-6 py-4.5 whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-widest font-extrabold border ${
+                                  member.status === 'active' 
+                                    ? 'bg-emerald-950/45 text-emerald-400 border-emerald-500/20' 
+                                    : 'bg-zinc-950/45 text-[#a1a1aa] border-[#27272a]/40'
+                                }`}>
+                                  {member.status === 'active' ? (language === 'EN' ? 'Active' : 'Aktif') : (language === 'EN' ? 'Inactive' : 'Nonaktif')}
+                                </span>
+                              </td>
+
+                              {/* Action Items */}
+                              <td className="px-6 py-4.5 whitespace-nowrap text-right text-xs">
+                                <div className="flex items-center justify-end gap-2">
+                                  {member.phoneNumber && (
+                                    <a 
+                                      href={`tel:${member.phoneNumber}`}
+                                      className="p-1 px-2.5 bg-neutral-800 hover:bg-neutral-700 text-[#a1a1aa] hover:text-white rounded border border-[#27272a] text-[10px] transition-colors"
+                                      title="Call member"
+                                    >
+                                      {language === 'EN' ? 'Call' : 'Hubungi'}
+                                    </a>
+                                  )}
+                                  <button
+                                    onClick={() => handleEditMember(member)}
+                                    className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-[#a1a1aa] hover:text-white rounded border border-[#27272a] transition-colors cursor-pointer"
+                                    title={language === 'EN' ? 'Edit member profile' : 'Ubah profil anggota'}
+                                  >
+                                    <Edit3 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteMember(member.id, member.fullName)}
+                                    className="p-1.5 bg-red-950/20 border border-red-500/20 hover:border-red-500/40 text-red-400 hover:text-red-300 rounded transition-colors cursor-pointer"
+                                    title="Delete member"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Personal Notes Highlights for Admins */}
+              <div className="bg-[#121214] border border-[#27272a] p-5 rounded-3xl" id="member-notes-panel">
+                <h4 className="text-xs uppercase font-extrabold tracking-widest text-[#a1a1aa] mb-3">
+                  {language === 'EN' ? 'Breathing Focus & Ranks Checklist' : 'Checklist & Catatan Fokus Pernapasan'}
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="member-notes-grid">
+                  {filteredMembers.filter(m => m.notes && m.notes.trim() !== '').slice(0, 3).map(m => (
+                    <div key={m.id} className="bg-[#18181b] border border-[#27272a] p-4 rounded-2xl flex flex-col justify-between">
+                      <p className="text-xs italic text-zinc-350 font-sans leading-relaxed">
+                        "{m.notes}"
+                      </p>
+                      <div className="flex items-center gap-2 mt-3.5 pt-3 border-t border-[#27272a]">
+                        <div className="w-5 h-5 bg-zinc-800 rounded-full flex items-center justify-center text-[10px] text-white font-bold select-none">
+                          {m.fullName.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="text-[11px] font-semibold text-white">{m.fullName}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {filteredMembers.filter(m => m.notes && m.notes.trim() !== '').length === 0 && (
+                    <div className="col-span-full py-4 text-xs text-[#a1a1aa] italic font-sans">
+                      {language === 'EN' ? 'No personal health or rank notes registered.' : 'Belum ada catatan kesehatan atau pangkat personal yang terdaftar.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* REGISTER MEMBER MODAL - Automatic dynamic BMI calculated inputs */}
+          {showMemberModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#09090b]/80 backdrop-blur-xs overflow-y-auto" id="register-member-modal">
+              <div className="relative w-full max-w-lg bg-[#121214] border border-[#27272a] rounded-3xl overflow-hidden p-6 sm:p-8 animate-scaleIn max-h-[90vh] overflow-y-auto" id="modal-container-member">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white">
+                      {memberFormData.id ? <Edit3 className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                    </div>
+                    <div>
+                      <h3 className="text-md sm:text-lg font-bold text-white font-sans">
+                        {memberFormData.id 
+                          ? (language === 'EN' ? 'Edit Member Profile' : 'Ubah Profil Anggota') 
+                          : (language === 'EN' ? 'Register New Member' : 'Daftarkan Anggota Baru')
+                        }
+                      </h3>
+                      <p className="text-[10px] text-[#a1a1aa]">
+                        {memberFormData.id 
+                          ? (language === 'EN' ? 'Update physical parameters and rank status' : 'Perbarui parameter fisik dan status tingkatan sabuk')
+                          : (language === 'EN' ? 'Set dynamic body metrics for athletic tracking' : 'Konfigurasi metrik tubuh untuk pelacakan fisik harian')
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowMemberModal(false)}
+                    className="p-1 px-1.5 rounded-lg bg-[#18181b] border border-[#27272a] text-[#a1a1aa] hover:text-white cursor-pointer active:scale-95 transition-transform"
+                    id="btn-close-member-modal"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveMember} className="space-y-4" id="member-register-form">
+                  {/* Full Name */}
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Full Name' : 'Nama Lengkap'} *</label>
+                    <input 
+                      type="text"
+                      className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      placeholder="e.g. Budi Santoso"
+                      value={memberFormData.fullName}
+                      onChange={(e) => setMemberFormData(prev => ({ ...prev, fullName: e.target.value }))}
+                      required
+                    />
+                  </div>
+
+                  {/* Gender & Belt Level */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Gender' : 'Jenis Kelamin'} *</label>
+                      <select
+                        className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        value={memberFormData.gender}
+                        onChange={(e) => setMemberFormData(prev => ({ ...prev, gender: e.target.value as 'Male' | 'Female' }))}
+                      >
+                        <option value="Male">{language === 'EN' ? 'Male' : 'Pria'}</option>
+                        <option value="Female">{language === 'EN' ? 'Female' : 'Wanita'}</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Belt Level' : 'Tingkatan Sabuk'} *</label>
+                      <select
+                        className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        value={memberFormData.beltLevel}
+                        onChange={(e) => setMemberFormData(prev => ({ ...prev, beltLevel: Number(e.target.value) }))}
+                      >
+                        {beltLevels.map(b => (
+                          <option key={b.id} value={b.id}>
+                            {language === 'EN' ? b.nameEN : b.nameID}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Body Dimensions (Height + Weight) with REAL-TIME BMI CALCULATOR */}
+                  <div className="bg-[#09090b] border border-[#27272a] p-4.5 rounded-2xl space-y-3.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-400">{language === 'EN' ? 'Body Parameters' : 'Parameter Tubuh'}</span>
+                      <div className="flex items-center gap-1.5 text-xs font-mono">
+                        <span className="text-[#a1a1aa]">{language === 'EN' ? 'Live BMI' : 'BMI Langsung'}:</span>
+                        <span className="font-black text-white">
+                          {(memberFormData.height > 0 
+                            ? (memberFormData.weight / ((memberFormData.height / 100) * (memberFormData.height / 100))).toFixed(1)
+                            : '0.0'
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Height text field & Slider */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa]">{language === 'EN' ? 'Height (cm)' : 'Tinggi Badan (cm)'}</label>
+                          <span className="text-[11px] font-mono text-white font-semibold">{memberFormData.height} cm</span>
+                        </div>
+                        <input 
+                          type="range"
+                          min="100"
+                          max="230"
+                          className="w-full accent-emerald-500 mb-1"
+                          value={memberFormData.height}
+                          onChange={(e) => setMemberFormData(prev => ({ ...prev, height: Number(e.target.value) }))}
+                        />
+                        <input 
+                          type="number"
+                          className="w-full bg-[#121214] border border-[#27272a] rounded-lg px-2 py-1 text-xs text-center font-mono text-white focus:outline-none focus:border-emerald-500"
+                          value={memberFormData.height}
+                          onChange={(e) => setMemberFormData(prev => ({ ...prev, height: Number(e.target.value) }))}
+                        />
+                      </div>
+
+                      {/* Weight text field & Slider */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa]">{language === 'EN' ? 'Weight (kg)' : 'Berat Badan (kg)'}</label>
+                          <span className="text-[11px] font-mono text-white font-semibold">{memberFormData.weight} kg</span>
+                        </div>
+                        <input 
+                          type="range"
+                          min="30"
+                          max="160"
+                          className="w-full accent-emerald-500 mb-1"
+                          value={memberFormData.weight}
+                          onChange={(e) => setMemberFormData(prev => ({ ...prev, weight: Number(e.target.value) }))}
+                        />
+                        <input 
+                          type="number"
+                          className="w-full bg-[#121214] border border-[#27272a] rounded-lg px-2 py-1 text-xs text-center font-mono text-white focus:outline-none focus:border-emerald-500"
+                          value={memberFormData.weight}
+                          onChange={(e) => setMemberFormData(prev => ({ ...prev, weight: Number(e.target.value) }))}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Live BMI indicator banner */}
+                    {(() => {
+                      const computedBmiVal = memberFormData.height > 0 
+                        ? (memberFormData.weight / ((memberFormData.height / 100) * (memberFormData.height / 100)))
+                        : 0;
+                      
+                      let bannerText = '';
+                      let bannerColor = '';
+                      if (computedBmiVal < 18.5) {
+                        bannerText = language === 'EN' ? 'Underweight — Practitioner requires muscle mass progression.' : 'Kurang Berat Badan — Praktisi membutuhkan peningkatan massa otot.';
+                        bannerColor = 'bg-blue-950/25 text-blue-400 border border-blue-500/10';
+                      } else if (computedBmiVal <= 24.9) {
+                        bannerText = language === 'EN' ? 'Optimal BMI — Superb physical frame for central breathing locks.' : 'BMI Optimal — Postur yang fantastis untuk pernapasan terkunci.';
+                        bannerColor = 'bg-emerald-950/25 text-emerald-400 border border-emerald-500/15';
+                      } else if (computedBmiVal <= 29.9) {
+                        bannerText = language === 'EN' ? 'Overweight — Moderate cardiovascular training is advised.' : 'Kelebihan Berat Badan — Disarankan porsi latihan kardiovaskular moderat.';
+                        bannerColor = 'bg-amber-950/25 text-amber-500 border border-amber-500/10';
+                      } else {
+                        bannerText = language === 'EN' ? 'Obese — Highly structured endurance conditioning required.' : 'Obesitas — Diperlukan pengkondisian daya tahan terstruktur tinggi.';
+                        bannerColor = 'bg-red-950/20 text-red-500 border border-red-500/15';
+                      }
+
+                      return (
+                        <div className={`p-3 rounded-xl text-[10px] leading-relaxed font-medium flex items-center gap-2 mt-2 ${bannerColor}`}>
+                          <Layers className="w-3.5 h-3.5 shrink-0" />
+                          <span>{bannerText}</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Dates Configuration */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Birth Date' : 'Tanggal Lahir'}</label>
+                      <input 
+                        type="date"
+                        className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        value={memberFormData.birthDate}
+                        onChange={(e) => setMemberFormData(prev => ({ ...prev, birthDate: e.target.value }))}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Joined Date' : 'Tanggal Masuk'}</label>
+                      <input 
+                        type="date"
+                        className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        value={memberFormData.joinedDate}
+                        onChange={(e) => setMemberFormData(prev => ({ ...prev, joinedDate: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Contact details */}
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Phone Number / Contact' : 'Nomor Telepon / Kontak'}</label>
+                    <input 
+                      type="tel"
+                      className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      placeholder="e.g. +62812345678"
+                      value={memberFormData.phoneNumber}
+                      onChange={(e) => setMemberFormData(prev => ({ ...prev, phoneNumber: e.target.value }))}
+                    />
+                  </div>
+
+                  {/* Status */}
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Status' : 'Status'} *</label>
+                    <select
+                      className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      value={memberFormData.status}
+                      onChange={(e) => setMemberFormData(prev => ({ ...prev, status: e.target.value as any }))}
+                    >
+                      <option value="active">{language === 'EN' ? 'Active' : 'Aktif'}</option>
+                      <option value="inactive">{language === 'EN' ? 'Inactive' : 'Nonaktif'}</option>
+                    </select>
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa] mb-1.5">{language === 'EN' ? 'Practitioner Health / Rank Notes' : 'Catatan Kesehatan / Tingkat Latihan'}</label>
+                    <textarea 
+                      rows={2}
+                      className="w-full bg-[#09090b] border border-[#27272a] rounded-xl p-3 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      placeholder={language === 'EN' ? "e.g. Focus on stomach muscles control during static positions..." : "misal. Fokus pada kontrol otot perut saat kuda-kuda statis..."}
+                      value={memberFormData.notes}
+                      onChange={(e) => setMemberFormData(prev => ({ ...prev, notes: e.target.value }))}
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="pt-4 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowMemberModal(false)}
+                      className="w-1/2 p-2.5 rounded-xl border border-[#27272a] hover:bg-neutral-800 transition-colors text-xs font-semibold text-[#fafafa] cursor-pointer text-center"
+                    >
+                      {language === 'EN' ? 'Discard' : 'Batal'}
+                    </button>
+                    <button
+                      type="submit"
+                      className="w-1/2 p-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-transform active:scale-95 cursor-pointer text-center shadow-md shadow-emerald-500/10"
+                      id="btn-submit-save-member"
+                    >
+                      {memberFormData.id
+                        ? (language === 'EN' ? 'Save Changes' : 'Simpan Perubahan')
+                        : (language === 'EN' ? 'Save Member' : 'Simpan Anggota')
+                      }
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           )}
@@ -1857,10 +2705,10 @@ export default function App() {
                     onChange={(e) => setFormData(p => ({ ...p, category: e.target.value }))}
                     className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-purple-500"
                   >
-                    <option value="kateda" className="bg-[#18181b]">Kateda Central Power (Internal Stances)</option>
-                    <option value="strength" className="bg-[#18181b]">Strength & Muscle Power</option>
-                    <option value="cardio" className="bg-[#18181b]">Cardio & Conditioning</option>
-                    <option value="mobility" className="bg-[#18181b]">Joint Release & Flexibility</option>
+                    <option value="jurus" className="bg-[#18181b]">Jurus (Forms)</option>
+                    <option value="pernapasan" className="bg-[#18181b]">Pernapasan (Breathing Conditioning)</option>
+                    <option value="exercise" className="bg-[#18181b]">Exercise (Physical Workout)</option>
+                    <option value="isometrik" className="bg-[#18181b]">Isometrik (Isometric Tension)</option>
                   </select>
                 </div>
               </div>
@@ -1877,7 +2725,7 @@ export default function App() {
                 ></textarea>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">{language === 'EN' ? 'Belt Level' : 'Tingkatan Sabuk'}</label>
                   <select 
@@ -1910,35 +2758,11 @@ export default function App() {
                     className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-1.5 text-white text-center font-mono"
                   />
                 </div>
-                <div className="flex flex-col justify-end">
-                  <label className="inline-flex items-center gap-2 py-2 cursor-pointer select-none">
-                    <input 
-                      type="checkbox" 
-                      checked={formData.katedaSpecific}
-                      onChange={(e) => setFormData(p => ({ ...p, katedaSpecific: e.target.checked }))}
-                      className="rounded border-[#27272a] bg-zinc-950 text-emerald-500 font-mono focus:ring-0 focus:ring-offset-0"
-                    />
-                    <span className="text-[10px] font-bold text-white uppercase tracking-wider">Kateda Official?</span>
-                  </label>
-                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Media Asset Format</label>
-                  <select 
-                    value={formData.mediaType || 'image'}
-                    onChange={(e) => setFormData(p => ({ ...p, mediaType: e.target.value as any }))}
-                    className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-white"
-                  >
-                    <option value="image">Static JPG/PNG Image</option>
-                    <option value="video">Direct MP4 Video Clip</option>
-                    <option value="youtube">Embedded YouTube Link</option>
-                    <option value="slides">Image Slideshow Deck</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Primary Media URL / Video Link</label>
+                  <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Primary Media URL / Illustration Link</label>
                   <input 
                     type="text" 
                     placeholder="https://images.unsplash.com/photo-... or YouTube link"
@@ -1959,58 +2783,16 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Optional Deck of Slides */}
-              {(formData.mediaType === 'slides' || (formData.mediaSlides && formData.mediaSlides.length > 0)) && (
-                <div className="p-3 bg-blue-950/10 border border-blue-500/15 rounded-xl space-y-1.5 animate-fadeIn">
-                  <label className="block text-[10px] font-mono uppercase text-blue-400 font-bold">Image Slideshow URLs (Comma Separated List)</label>
-                  <input 
-                    type="text" 
-                    placeholder="https://img1.com, https://img2.com, https://img3.com"
-                    value={formData.mediaSlides?.join(', ') || ''}
-                    onChange={(e) => setFormData(p => ({ ...p, mediaSlides: e.target.value.split(',').map(s => s.trim()).filter(s => s.length > 0) }))}
-                    className="w-full bg-[#09090b] border border-blue-500/25 rounded-lg px-3 py-1.5 text-[#fff]"
-                  />
-                  <p className="text-[10px] text-[#a1a1aa] italic">Provides multiple diagrams for sequential steps. If active step exceeds count, slides will loop around.</p>
-                </div>
-              )}
-
-              {/* Extended KeepFit Exercise Custom Configuration Parameters */}
-              <div className="bg-zinc-900/60 p-4 border border-[#27272a] rounded-xl grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-zinc-900/60 p-4 border border-[#27272a] rounded-xl">
                 <div>
                   <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Overall Exercise Cycles (Loops)</label>
                   <input 
                     type="number" 
                     value={formData.loops !== undefined ? formData.loops : 5}
                     onChange={(e) => setFormData(p => ({ ...p, loops: Math.max(1, Number(e.target.value) || 5) }))}
-                    className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-1.5 text-white text-center font-mono font-bold"
+                    className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-1.5 text-white text-center font-mono font-bold max-w-[200px]"
                   />
                   <p className="text-[9px] text-[#a1a1aa] mt-1">Default repeat loop iterations for cyclical components.</p>
-                </div>
-
-                <div className="flex flex-col justify-center">
-                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                    <input 
-                      type="checkbox" 
-                      checked={formData.vocalGuide !== false}
-                      onChange={(e) => setFormData(p => ({ ...p, vocalGuide: e.target.checked }))}
-                      className="rounded border-[#27272a] bg-zinc-950 text-emerald-500 font-mono focus:ring-0 focus:ring-offset-0"
-                    />
-                    <span className="text-[10px] font-bold text-white uppercase tracking-wider">Enable Voice Over Coach?</span>
-                  </label>
-                  <p className="text-[9px] text-[#a1a1aa] mt-1 pl-6">Announce training cue steps via speechSynthesis engine.</p>
-                </div>
-
-                <div className="flex flex-col justify-center">
-                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                    <input 
-                      type="checkbox" 
-                      checked={formData.lungWaveD !== false}
-                      onChange={(e) => setFormData(p => ({ ...p, lungWaveD: e.target.checked }))}
-                      className="rounded border-[#27272a] bg-zinc-950 text-emerald-500 font-mono focus:ring-0 focus:ring-offset-0"
-                    />
-                    <span className="text-[10px] font-bold text-white uppercase tracking-wider">Lung Wave Diagram Aid?</span>
-                  </label>
-                  <p className="text-[9px] text-[#a1a1aa] mt-1 pl-6">Toggle live expansion/contraction visualizer graphics during workout.</p>
                 </div>
               </div>
 
@@ -2066,7 +2848,7 @@ export default function App() {
                       </div>
 
                       {/* Step secondary timing details parameters */}
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-[11px]">
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 text-[11px]">
                         <div>
                           <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">State Type</label>
                           <select 
@@ -2083,17 +2865,51 @@ export default function App() {
                             <option value="rest">🧘 Post-Lock Rest</option>
                           </select>
                         </div>
+
+                        <div>
+                          <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">Target Unit</label>
+                          <select 
+                            value={detail.unit || 'seconds'}
+                            onChange={(e) => {
+                              const newUnit = e.target.value as any;
+                              updateStepRow(idx, { 
+                                unit: newUnit,
+                                quantity: newUnit !== 'seconds' ? (detail.quantity || 10) : undefined 
+                              });
+                            }}
+                            className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-2 py-1.5 text-white"
+                          >
+                            <option value="seconds">⏱️ Seconds</option>
+                            <option value="reps">🔁 Reps (Repetitions)</option>
+                            <option value="steps">🚶 Steps (Walking)</option>
+                            <option value="series">🧩 Series (Forms/Jurus)</option>
+                            <option value="cycles">🔄 Cycles (Breaths)</option>
+                          </select>
+                        </div>
                         
                         <div>
-                          <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">Duration (Sec)</label>
-                          <input 
-                            type="number" 
-                            value={detail.duration || 15}
-                            onChange={(e) => updateStepRow(idx, { duration: Math.max(1, Number(e.target.value)) })}
-                            required
-                            placeholder="Seconds"
-                            className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-2 py-1 text-center text-white font-mono"
-                          />
+                          <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">
+                            {(!detail.unit || detail.unit === 'seconds') ? 'Duration (Sec)' : `Target ${detail.unit}`}
+                          </label>
+                          {(!detail.unit || detail.unit === 'seconds') ? (
+                            <input 
+                              type="number" 
+                              value={detail.duration || 15}
+                              onChange={(e) => updateStepRow(idx, { duration: Math.max(1, Number(e.target.value)) })}
+                              required
+                              placeholder="Seconds"
+                              className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-2 py-1 text-center text-white font-mono"
+                            />
+                          ) : (
+                            <input 
+                              type="number" 
+                              value={detail.quantity || 10}
+                              onChange={(e) => updateStepRow(idx, { quantity: Math.max(1, Number(e.target.value)) })}
+                              required
+                              placeholder="Quantity"
+                              className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-2 py-1 text-center text-white font-mono"
+                            />
+                          )}
                         </div>
 
                         <div>
@@ -2107,7 +2923,7 @@ export default function App() {
                           />
                         </div>
 
-                        <div>
+                        <div className="col-span-2 md:col-span-1">
                           <label className="block text-[9px] font-mono uppercase text-[#fafafa] font-bold mb-1">📣 TTS Speech Command</label>
                           <input 
                             type="text" 

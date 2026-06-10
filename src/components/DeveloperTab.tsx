@@ -28,7 +28,8 @@ import {
   getCategories, 
   getStats, 
   addActivity,
-  resetEntireDatabase
+  resetEntireDatabase,
+  getMembers
 } from '../db';
 import { BELT_LEVELS, BeltLevelInfo, Exercise } from '../types';
 
@@ -172,6 +173,10 @@ export default function DeveloperTab({
         }
       }
 
+      if (tbl === 'members') {
+        return 'select=id,fullName,gender,beltLevel,birthDate,joinedDate,phoneNumber,height,weight,status,notes';
+      }
+
       return '';
     };
 
@@ -244,7 +249,7 @@ export default function DeveloperTab({
   };
 
   // Handle Preset Choices helper
-  const loadPresetRoute = (route: 'exercises-get' | 'activities-get' | 'activities-post' | 'categories-get') => {
+  const loadPresetRoute = (route: 'exercises-get' | 'activities-get' | 'activities-post' | 'categories-get' | 'members-get') => {
     switch (route) {
       case 'exercises-get':
         setBuilderTable('exercises');
@@ -289,6 +294,16 @@ export default function DeveloperTab({
         setBuilderOrderDir('asc');
         setBuilderLimit('all');
         setApiUrl(`${supabaseUrl}/rest/v1/categories`);
+        setHttpMethod('GET');
+        break;
+      case 'members-get':
+        setBuilderTable('members');
+        setBuilderCategory('all');
+        setBuilderDifficulty('all');
+        setBuilderOrderCol('joinedDate');
+        setBuilderOrderDir('desc');
+        setBuilderLimit('all');
+        setApiUrl(`${supabaseUrl}/rest/v1/members?order=joinedDate.desc`);
         setHttpMethod('GET');
         break;
     }
@@ -524,6 +539,10 @@ export default function DeveloperTab({
           result = await getCategories();
           onAddLog(`Fetched taxonomies. Loaded ${result.length} category metadata files.`, 'success');
           break;
+        case 'getMembers':
+          result = await getMembers();
+          onAddLog(`Fetched practitioners. Loaded ${result.length} registered Kateda members.`, 'success');
+          break;
         default:
           throw new Error('Method call context unknown.');
       }
@@ -725,6 +744,12 @@ export default function DeveloperTab({
                 >
                   GET /categories
                 </button>
+                <button
+                  onClick={() => loadPresetRoute('members-get')}
+                  className="px-2.5 py-1.5 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/20 text-[10px] font-mono text-emerald-300 rounded-lg cursor-pointer font-bold animate-pulse"
+                >
+                  GET /members
+                </button>
               </div>
             </div>
 
@@ -752,6 +777,7 @@ export default function DeveloperTab({
                     <option value="exercises">exercises</option>
                     <option value="activities">activities</option>
                     <option value="categories">categories</option>
+                    <option value="members">members</option>
                   </select>
                 </div>
 
@@ -767,11 +793,10 @@ export default function DeveloperTab({
                     className="w-full bg-[#18181b] border border-[#27272a] disabled:opacity-40 disabled:cursor-not-allowed rounded-lg px-2.5 py-2 text-[11px] font-mono text-white cursor-pointer focus:outline-none focus:border-purple-500"
                   >
                     <option value="all">All Categories (no filter)</option>
-                    <option value="kateda">kateda (Martial Breath)</option>
-                    <option value="breathing">breathing (Lung Expansion)</option>
-                    <option value="warm-ups">warm-ups (Intro Prep)</option>
-                    <option value="conditioning">conditioning (Fortitude)</option>
-                    <option value="stretching">stretching (Flexibility)</option>
+                    <option value="jurus">jurus (Martial Forms)</option>
+                    <option value="pernapasan">pernapasan (Breathing Conditioning)</option>
+                    <option value="exercise">exercise (Physical Exercises)</option>
+                    <option value="isometrik">isometrik (Isometric Tension)</option>
                   </select>
                 </div>
 
@@ -1107,6 +1132,7 @@ export default function DeveloperTab({
                   <option value="getExercises">SDK: getExercises() - Query "exercises" Remote Table</option>
                   <option value="getActivities">SDK: getActivities() - Query "activities" Remote Table</option>
                   <option value="getCategories">SDK: getCategories() - Query "categories" Remote Table</option>
+                  <option value="getMembers">SDK: getMembers() - Query "members" Remote Table</option>
                 </select>
               </div>
 
@@ -1421,10 +1447,10 @@ export default function DeveloperTab({
           Active Supabase Postgres Architecture Models
         </h3>
         <p className="text-xs text-[#a1a1aa] mb-4">
-          This system uses three core relational tables on Supabase. Handshakes and inserts map 100% transparently to these schemas.
+          This system uses four core relational tables on Supabase. Handshakes and inserts map 100% transparently to these schemas.
         </p>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="table-relationship-details">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6" id="table-relationship-details">
           {/* Table: Exercises */}
           <div className="bg-zinc-950 rounded-xl border border-[#27272a] p-4 flex flex-col justify-between">
             <div>
@@ -1531,6 +1557,192 @@ export default function DeveloperTab({
             </div>
             <p className="text-[10px] text-[#a1a1aa] italic mt-4 border-t border-[#27272a] pt-2">Tracks actual mobile workout outcomes, heart-rate diagnostics, and completion stats.</p>
           </div>
+
+          {/* Table: Members */}
+          <div className="bg-zinc-950 rounded-xl border border-[#27272a] p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2 border-b border-[#27272a] pb-2">
+                <Database className="w-4 h-4 text-amber-500" />
+                <h4 className="text-xs font-bold text-white font-mono">Table: members</h4>
+              </div>
+              <div className="mt-3 space-y-2 text-[11px] font-mono font-semibold">
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>id (Primary Key)</span>
+                  <span className="text-amber-500">text</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>"fullName"</span>
+                  <span className="text-amber-500">text</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>gender</span>
+                  <span className="text-amber-500">text</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>"beltLevel"</span>
+                  <span className="text-[#a1a1aa] font-bold">FK to belt_levels(id)</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>"birthDate"</span>
+                  <span className="text-amber-500">date</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>"joinedDate"</span>
+                  <span className="text-amber-500">date</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>"phoneNumber"</span>
+                  <span className="text-amber-500">text</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>height</span>
+                  <span className="text-amber-500">real</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>weight</span>
+                  <span className="text-amber-500">real</span>
+                </div>
+                <div className="flex justify-between border-b border-[#27272a]/50 pb-1 text-[#a1a1aa]">
+                  <span>status</span>
+                  <span className="text-amber-500">text</span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-[#a1a1aa] italic mt-4 border-t border-[#27272a] pt-2">Tracks registered Kateda Keepfit practitioners, physical height/weight metrics (used to calculate BMI on the fly dynamically for seniors and women health tracking), levels, and notes.</p>
+          </div>
+        </div>
+
+        {/* Copyable SQL Schema Script */}
+        <div className="mt-6 bg-[#09090b] border border-[#27272a] rounded-xl p-4">
+          <div className="flex justify-between items-center mb-3">
+            <div>
+              <h4 className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
+                <Code className="w-3.5 h-3.5 text-emerald-400" />
+                CREATE TABLE SQL Script for Supabase
+              </h4>
+              <p className="text-[10px] text-[#a1a1aa]">Copy and execute this script in your Supabase SQL Editor to support instant data sync.</p>
+            </div>
+            <button
+              onClick={() => {
+                const sqlText = `-- Drop existing policies if they already exist to prevent duplicate policy errors
+DROP POLICY IF EXISTS "Enable read access for all users" ON members;
+DROP POLICY IF EXISTS "Enable insert for all users" ON members;
+DROP POLICY IF EXISTS "Enable update for all users" ON members;
+DROP POLICY IF EXISTS "Enable delete for all users" ON members;
+
+DROP POLICY IF EXISTS "Enable read access for all users" ON activities;
+DROP POLICY IF EXISTS "Enable insert for all users" ON activities;
+DROP POLICY IF EXISTS "Enable update for all users" ON activities;
+DROP POLICY IF EXISTS "Enable delete for all users" ON activities;
+
+-- Create Kateda Keep-Fit Members Database Table
+CREATE TABLE IF NOT EXISTS members (
+    id TEXT PRIMARY KEY,
+    "fullName" TEXT NOT NULL,
+    gender TEXT NOT NULL,
+    "beltLevel" INTEGER NOT NULL DEFAULT 1,
+    "birthDate" DATE NOT NULL,
+    "joinedDate" DATE NOT NULL,
+    "phoneNumber" TEXT,
+    height REAL DEFAULT 0,
+    weight REAL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    notes TEXT,
+    avatar TEXT
+);
+
+-- Create Kateda Activities Database Table (Normalized!)
+CREATE TABLE IF NOT EXISTS activities (
+    id TEXT PRIMARY KEY,
+    "userId" TEXT REFERENCES members(id) ON DELETE SET NULL,
+    "exerciseId" TEXT,
+    timestamp TEXT NOT NULL,
+    duration INTEGER,
+    "caloriesBurned" INTEGER,
+    status TEXT NOT NULL DEFAULT 'completed',
+    "heartRateAvg" INTEGER,
+    notes TEXT
+);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
+
+-- Access Policies (Allows reads and writes for the application clients)
+CREATE POLICY "Enable read access for all users" ON members FOR SELECT USING (true);
+CREATE POLICY "Enable insert for all users" ON members FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update for all users" ON members FOR UPDATE USING (true);
+CREATE POLICY "Enable delete for all users" ON members FOR DELETE USING (true);
+
+CREATE POLICY "Enable read access for all users" ON activities FOR SELECT USING (true);
+CREATE POLICY "Enable insert for all users" ON activities FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update for all users" ON activities FOR UPDATE USING (true);
+CREATE POLICY "Enable delete for all users" ON activities FOR DELETE USING (true);`;
+                navigator.clipboard.writeText(sqlText);
+                onAddLog("SQL creation script copied to clipboard successfully!", "success");
+              }}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded-lg cursor-pointer flex items-center gap-1.5 transition-all"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy SQL Script</span>
+            </button>
+          </div>
+          <pre className="text-[10px] text-zinc-400 font-mono bg-[#020202] border border-[#1f1f23] rounded-lg p-3.5 overflow-x-auto select-all leading-normal">
+{`-- Clear any old policies to prevent collision/already exists errors
+DROP POLICY IF EXISTS "Enable read access for all users" ON members;
+DROP POLICY IF EXISTS "Enable insert for all users" ON members;
+DROP POLICY IF EXISTS "Enable update for all users" ON members;
+DROP POLICY IF EXISTS "Enable delete for all users" ON members;
+
+DROP POLICY IF EXISTS "Enable read access for all users" ON activities;
+DROP POLICY IF EXISTS "Enable insert for all users" ON activities;
+DROP POLICY IF EXISTS "Enable update for all users" ON activities;
+DROP POLICY IF EXISTS "Enable delete for all users" ON activities;
+
+-- Create Kateda Keep-Fit Members Database Table
+CREATE TABLE IF NOT EXISTS members (
+    id TEXT PRIMARY KEY,
+    "fullName" TEXT NOT NULL,
+    gender TEXT NOT NULL,
+    "beltLevel" INTEGER NOT NULL DEFAULT 1,
+    "birthDate" DATE NOT NULL,
+    "joinedDate" DATE NOT NULL,
+    "phoneNumber" TEXT,
+    height REAL DEFAULT 0,
+    weight REAL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    notes TEXT,
+    avatar TEXT
+);
+
+-- Create Kateda Activities Database Table (Normalized!)
+CREATE TABLE IF NOT EXISTS activities (
+    id TEXT PRIMARY KEY,
+    "userId" TEXT REFERENCES members(id) ON DELETE SET NULL,
+    "exerciseId" TEXT,
+    timestamp TEXT NOT NULL,
+    duration INTEGER,
+    "caloriesBurned" INTEGER,
+    status TEXT NOT NULL DEFAULT 'completed',
+    "heartRateAvg" INTEGER,
+    notes TEXT
+);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
+
+-- Access Policies (Allows reads and writes for the application clients)
+CREATE POLICY "Enable read access for all users" ON members FOR SELECT USING (true);
+CREATE POLICY "Enable insert for all users" ON members FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update for all users" ON members FOR UPDATE USING (true);
+CREATE POLICY "Enable delete for all users" ON members FOR DELETE USING (true);
+
+CREATE POLICY "Enable read access for all users" ON activities FOR SELECT USING (true);
+CREATE POLICY "Enable insert for all users" ON activities FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update for all users" ON activities FOR UPDATE USING (true);
+CREATE POLICY "Enable delete for all users" ON activities FOR DELETE USING (true);`}
+          </pre>
         </div>
       </div>
       

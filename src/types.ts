@@ -30,6 +30,8 @@ export interface StepDetail {
   hint?: string; // audio coach verbal cues or technical posture tips
   loops?: number; // loop count for cyclical breath control stages
   ttsCommand?: string; // text-to-speech exact command to read (e.g., "Inhale.")
+  unit?: 'seconds' | 'reps' | 'steps' | 'series' | 'cycles'; // target metric unit for the movement
+  quantity?: number; // quantity target for non-seconds unit (e.g. 10 steps, 3 series)
 }
 
 export interface Exercise {
@@ -96,3 +98,19 @@ export interface KeepFitStats {
   totalActiveTime: number; // in minutes
   activeUsersCount: number;
 }
+
+export interface Member {
+  id: string;
+  fullName: string;
+  gender: 'Male' | 'Female';
+  beltLevel: number; // Links to BeltLevelInfo.id
+  birthDate: string; // YYYY-MM-DD
+  joinedDate: string; // YYYY-MM-DD
+  phoneNumber?: string;
+  height: number; // cm
+  weight: number; // kg
+  status: 'active' | 'inactive';
+  notes?: string;
+  avatar?: string;
+}
+
