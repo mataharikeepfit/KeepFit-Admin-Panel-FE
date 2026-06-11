@@ -30,8 +30,9 @@ export interface StepDetail {
   hint?: string; // audio coach verbal cues or technical posture tips
   loops?: number; // loop count for cyclical breath control stages
   ttsCommand?: string; // text-to-speech exact command to read (e.g., "Inhale.")
-  unit?: 'seconds' | 'reps' | 'steps' | 'series' | 'cycles'; // target metric unit for the movement
+  unit?: 'none' | 'seconds' | 'reps' | 'steps' | 'series' | 'cycles'; // target metric unit for the movement
   quantity?: number; // quantity target for non-seconds unit (e.g. 10 steps, 3 series)
+  waitForTTS?: boolean; // Wait for TTS audio to complete before countdown or advance
 }
 
 export interface Exercise {
@@ -44,9 +45,11 @@ export interface Exercise {
   description: string;
   steps: string[];
   stepDetails?: StepDetail[]; // Advanced timed execution data for mobile engine synchronization
-  mediaType: 'image' | 'video' | 'slides' | 'youtube';
-  mediaUrl: string;
+  mediaType?: 'image' | 'video' | 'slides' | 'youtube';
+  mediaUrl?: string;
   mediaSlides?: string[]; // for slides-based exercise diagrams
+  videoUrl?: string; // New clean database schema field for demonstration video
+  slidesUrl?: string[]; // New clean database schema field for image slides
   loops?: number; // default outer loop count, e.g. 5
   vocalGuide?: boolean; // toggle audio speech voice highlights
   lungWaveD?: boolean; // toggle breathing rhythm visualizer panel/animation (Lung Wave diagram)
@@ -116,5 +119,17 @@ export interface Member {
   status: 'active' | 'inactive';
   notes?: string;
   avatar?: string;
+}
+
+export interface DailyStepLog {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  date: string; // YYYY-MM-DD
+  steps: number;
+  caloriesBurned?: number;
+  distanceKm?: number;
+  updatedAt?: string;
 }
 

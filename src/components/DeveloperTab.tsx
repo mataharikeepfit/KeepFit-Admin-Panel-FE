@@ -143,9 +143,9 @@ export default function DeveloperTab({
 
       if (tbl === 'exercises') {
         if (resolvedLang === 'EN') {
-          return 'select=id,titleEN,category,difficulty,duration,calories,descriptionEN,stepsEN,stepDetailsEN,mediaType,mediaUrl,mediaSlides,loops,vocalGuide,lungWaveD,targetMuscles,katedaSpecific,updatedAt';
+          return 'select=id,titleEN,category,difficulty,duration,calories,descriptionEN,stepsEN,stepDetailsEN,videoUrl,slidesUrl,loops,targetMuscles,katedaSpecific,updatedAt';
         } else {
-          return 'select=id,titleID,category,difficulty,duration,calories,descriptionID,stepsID,stepDetailsID,mediaType,mediaUrl,mediaSlides,loops,vocalGuide,lungWaveD,targetMuscles,katedaSpecific,updatedAt';
+          return 'select=id,titleID,category,difficulty,duration,calories,descriptionID,stepsID,stepDetailsID,videoUrl,slidesUrl,loops,targetMuscles,katedaSpecific,updatedAt';
         }
       }
 
@@ -1656,6 +1656,11 @@ DROP POLICY IF EXISTS "Enable insert for all users" ON exercises;
 DROP POLICY IF EXISTS "Enable update for all users" ON exercises;
 DROP POLICY IF EXISTS "Enable delete for all users" ON exercises;
 
+DROP POLICY IF EXISTS "Enable read access for all users" ON daily_steps;
+DROP POLICY IF EXISTS "Enable insert for all users" ON daily_steps;
+DROP POLICY IF EXISTS "Enable update for all users" ON daily_steps;
+DROP POLICY IF EXISTS "Enable delete for all users" ON daily_steps;
+
 -- Create Kateda Keep-Fit Members Database Table
 CREATE TABLE IF NOT EXISTS members (
     id TEXT PRIMARY KEY,
@@ -1687,9 +1692,8 @@ CREATE TABLE IF NOT EXISTS exercises (
     "stepsID" JSONB DEFAULT '[]'::jsonb,
     "stepDetailsEN" JSONB DEFAULT '[]'::jsonb,
     "stepDetailsID" JSONB DEFAULT '[]'::jsonb,
-    "mediaType" TEXT,
-    "mediaUrl" TEXT,
-    "mediaSlides" JSONB DEFAULT '[]'::jsonb,
+    "videoUrl" TEXT,
+    "slidesUrl" JSONB DEFAULT '[]'::jsonb,
     loops INTEGER DEFAULT 1,
     "vocalGuide" BOOLEAN DEFAULT true,
     "lungWaveD" BOOLEAN DEFAULT true,
@@ -1718,10 +1722,22 @@ CREATE TABLE IF NOT EXISTS activities (
     "achievedValue" REAL
 );
 
+-- Create Kateda Daily Steps Database Table (Normalized!)
+CREATE TABLE IF NOT EXISTS daily_steps (
+    id TEXT PRIMARY KEY,              -- Generated as: 'userId_YYYY-MM-DD' (e.g. 'usr123_2026-06-11')
+    "userId" TEXT REFERENCES members(id) ON DELETE CASCADE,
+    date DATE NOT NULL,               -- The tracking day
+    steps INTEGER NOT NULL DEFAULT 0, -- Accumulated steps
+    calories INTEGER DEFAULT 0,       -- Estimated passive active calories burned
+    distance REAL DEFAULT 0.0,        -- Estimated kilometers/meters walked
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
 -- Enable Row Level Security (RLS)
 ALTER TABLE members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exercises ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_steps ENABLE ROW LEVEL SECURITY;
 
 -- Access Policies (Allows reads and writes for the application clients)
 CREATE POLICY "Enable read access for all users" ON members FOR SELECT USING (true);
@@ -1737,7 +1753,12 @@ CREATE POLICY "Enable delete for all users" ON exercises FOR DELETE USING (true)
 CREATE POLICY "Enable read access for all users" ON activities FOR SELECT USING (true);
 CREATE POLICY "Enable insert for all users" ON activities FOR INSERT WITH CHECK (true);
 CREATE POLICY "Enable update for all users" ON activities FOR UPDATE USING (true);
-CREATE POLICY "Enable delete for all users" ON activities FOR DELETE USING (true);`;
+CREATE POLICY "Enable delete for all users" ON activities FOR DELETE USING (true);
+
+CREATE POLICY "Enable read access for all users" ON daily_steps FOR SELECT USING (true);
+CREATE POLICY "Enable insert for all users" ON daily_steps FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update for all users" ON daily_steps FOR UPDATE USING (true);
+CREATE POLICY "Enable delete for all users" ON daily_steps FOR DELETE USING (true);`;
                 navigator.clipboard.writeText(sqlText);
                 onAddLog("SQL creation script copied to clipboard successfully!", "success");
               }}
@@ -1764,6 +1785,11 @@ DROP POLICY IF EXISTS "Enable insert for all users" ON exercises;
 DROP POLICY IF EXISTS "Enable update for all users" ON exercises;
 DROP POLICY IF EXISTS "Enable delete for all users" ON exercises;
 
+DROP POLICY IF EXISTS "Enable read access for all users" ON daily_steps;
+DROP POLICY IF EXISTS "Enable insert for all users" ON daily_steps;
+DROP POLICY IF EXISTS "Enable update for all users" ON daily_steps;
+DROP POLICY IF EXISTS "Enable delete for all users" ON daily_steps;
+
 -- Create Kateda Keep-Fit Members Database Table
 CREATE TABLE IF NOT EXISTS members (
     id TEXT PRIMARY KEY,
@@ -1795,9 +1821,8 @@ CREATE TABLE IF NOT EXISTS exercises (
     "stepsID" JSONB DEFAULT '[]'::jsonb,
     "stepDetailsEN" JSONB DEFAULT '[]'::jsonb,
     "stepDetailsID" JSONB DEFAULT '[]'::jsonb,
-    "mediaType" TEXT,
-    "mediaUrl" TEXT,
-    "mediaSlides" JSONB DEFAULT '[]'::jsonb,
+    "videoUrl" TEXT,
+    "slidesUrl" JSONB DEFAULT '[]'::jsonb,
     loops INTEGER DEFAULT 1,
     "vocalGuide" BOOLEAN DEFAULT true,
     "lungWaveD" BOOLEAN DEFAULT true,
@@ -1826,10 +1851,22 @@ CREATE TABLE IF NOT EXISTS activities (
     "achievedValue" REAL
 );
 
+-- Create Kateda Daily Steps Database Table (Normalized!)
+CREATE TABLE IF NOT EXISTS daily_steps (
+    id TEXT PRIMARY KEY,              -- Generated as: 'userId_YYYY-MM-DD' (e.g. 'usr123_2026-06-11')
+    "userId" TEXT REFERENCES members(id) ON DELETE CASCADE,
+    date DATE NOT NULL,               -- The tracking day
+    steps INTEGER NOT NULL DEFAULT 0, -- Accumulated steps
+    calories INTEGER DEFAULT 0,       -- Estimated passive active calories burned
+    distance REAL DEFAULT 0.0,        -- Estimated kilometers/meters walked
+    "updatedAt" TIMESTAMP DEFAULT NOW()
+);
+
 -- Enable Row Level Security (RLS)
 ALTER TABLE members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exercises ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_steps ENABLE ROW LEVEL SECURITY;
 
 -- Access Policies (Allows reads and writes for the application clients)
 CREATE POLICY "Enable read access for all users" ON members FOR SELECT USING (true);
@@ -1845,7 +1882,12 @@ CREATE POLICY "Enable delete for all users" ON exercises FOR DELETE USING (true)
 CREATE POLICY "Enable read access for all users" ON activities FOR SELECT USING (true);
 CREATE POLICY "Enable insert for all users" ON activities FOR INSERT WITH CHECK (true);
 CREATE POLICY "Enable update for all users" ON activities FOR UPDATE USING (true);
-CREATE POLICY "Enable delete for all users" ON activities FOR DELETE USING (true);`}
+CREATE POLICY "Enable delete for all users" ON activities FOR DELETE USING (true);
+
+CREATE POLICY "Enable read access for all users" ON daily_steps FOR SELECT USING (true);
+CREATE POLICY "Enable insert for all users" ON daily_steps FOR INSERT WITH CHECK (true);
+CREATE POLICY "Enable update for all users" ON daily_steps FOR UPDATE USING (true);
+CREATE POLICY "Enable delete for all users" ON daily_steps FOR DELETE USING (true);`}
           </pre>
         </div>
       </div>

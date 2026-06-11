@@ -27,9 +27,12 @@ import {
   ArrowRight,
   BookOpen,
   Info,
-  Menu
+  Menu,
+  Footprints,
+  Calendar
 } from 'lucide-react';
-import { Exercise, Category, Activity as ActivityType, KeepFitStats, BELT_LEVELS, BeltLevel, BeltLevelInfo, Member } from './types';
+import { Exercise, Category, Activity as ActivityType, KeepFitStats, BELT_LEVELS, BeltLevel, BeltLevelInfo, Member, DailyStepLog } from './types';
+import { KatedaStepDiagram } from './components/KatedaStepDiagram';
 import StatsDashboard from './components/StatsDashboard';
 import DeveloperTab from './components/DeveloperTab';
 import { translations } from './locales';
@@ -45,7 +48,10 @@ import {
   getMembers,
   addMember,
   updateMember,
-  deleteMember
+  deleteMember,
+  getDailyStepLogs,
+  addOrUpdateDailyStepLog,
+  deleteDailyStepLog
 } from './db';
 
 export default function App() {
@@ -89,6 +95,7 @@ export default function App() {
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'exercises' | 'activities' | 'members' | 'developer'>('dashboard');
+  const [activitiesSubTab, setActivitiesSubTab] = useState<'workouts' | 'steps'>('workouts');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const handleTabChange = (tab: 'dashboard' | 'exercises' | 'activities' | 'members' | 'developer') => {
@@ -101,6 +108,7 @@ export default function App() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [activities, setActivities] = useState<ActivityType[]>([]);
+  const [dailyStepLogs, setDailyStepLogs] = useState<DailyStepLog[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [stats, setStats] = useState<KeepFitStats>({
     totalExercises: 0,
@@ -135,8 +143,45 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [exerciseSearch, setExerciseSearch] = useState('');
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
+  const [exerciseMediaTab, setExerciseMediaTab] = useState<'slides' | 'video'>('slides');
+
+  useEffect(() => {
+    if (selectedExercise) {
+      const slidesFromField = (selectedExercise.mediaSlides || selectedExercise.slidesUrl || []).filter(Boolean);
+      const hasSlides = slidesFromField.length > 0 || (selectedExercise.stepDetails && selectedExercise.stepDetails.length > 0);
+      const hasVideo = selectedExercise.mediaUrl && (
+        selectedExercise.mediaUrl.includes('youtube.com') || 
+        selectedExercise.mediaUrl.includes('youtu.be') || 
+        selectedExercise.mediaUrl.endsWith('.mp4') || 
+        selectedExercise.mediaUrl.includes('.mp4?') ||
+        selectedExercise.mediaType === 'video' ||
+        selectedExercise.mediaType === 'youtube'
+      );
+      if (hasSlides) {
+        setExerciseMediaTab('slides');
+      } else if (hasVideo) {
+        setExerciseMediaTab('video');
+      } else {
+        setExerciseMediaTab('slides');
+      }
+    }
+  }, [selectedExercise?.id]);
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('all');
+
+  // Custom Confirmation Modal State
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   // Members States
   const [showMemberModal, setShowMemberModal] = useState(false);
@@ -167,7 +212,7 @@ export default function App() {
     calories: 120,
     description: '',
     steps: [''],
-    stepDetails: [{ text: '', duration: 15, type: 'instruction', hint: '', loops: 5, ttsCommand: '' }],
+    stepDetails: [{ text: '', duration: 0, type: 'instruction', hint: '', loops: 1, ttsCommand: '', unit: 'none', waitForTTS: true }],
     mediaType: 'image',
     mediaUrl: '',
     targetMuscles: ['Abdominals', 'Core'],
@@ -193,6 +238,12 @@ export default function App() {
   const [manualPractitionerName, setManualPractitionerName] = useState<string>('');
   const [sessionDateTime, setSessionDateTime] = useState<string>(new Date().toISOString().slice(0, 16));
   const [achievedUnitsQty, setAchievedUnitsQty] = useState<string>('');
+
+  // Daily Steps Form States
+  const [stepMemberId, setStepMemberId] = useState<string>('');
+  const [stepDate, setStepDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [stepCount, setStepCount] = useState<string>('');
+  const [stepSaving, setStepSaving] = useState<boolean>(false);
 
   // Mobile Workout simulator inputs
   const [simFormData, setSimFormData] = useState({
@@ -225,13 +276,14 @@ export default function App() {
   const loadSystemData = async () => {
     try {
       setLoading(true);
-      const [exList, catList, actList, statTotals, beltList, memberList] = await Promise.all([
+      const [exList, catList, actList, statTotals, beltList, memberList, stepsList] = await Promise.all([
         getExercises(),
         getCategories(),
         getActivities(),
         getStats(),
         getBeltLevels(),
-        getMembers()
+        getMembers(),
+        getDailyStepLogs()
       ]);
 
       setRawExercises(exList);
@@ -240,11 +292,13 @@ export default function App() {
       setStats(statTotals);
       setBeltLevels(beltList);
       setMembers(memberList);
+      setDailyStepLogs(stepsList);
       if (memberList.length > 0) {
         setSelectedMemberId(memberList[0].id);
+        setStepMemberId(memberList[0].id);
       }
 
-      addLog(`Synchronized active databases. Loaded ${exList.length} exercises, ${beltList.length} belt levels, ${memberList.length} members, and ${actList.length} activities.`, 'success');
+      addLog(`Synchronized active databases. Loaded ${exList.length} exercises, ${beltList.length} belt levels, ${memberList.length} members, ${actList.length} activities, and ${stepsList.length} daily steps.`, 'success');
     } catch (e: any) {
       console.error(e);
       addLog(`Sync Failure: ${e.message || e}`, 'warn');
@@ -292,6 +346,29 @@ export default function App() {
       const currentList = [...rawExercises];
       const filteredSteps = formData.steps?.filter(s => s.trim() !== '') || [];
       
+      const rawStepDetails = formData.stepDetails || [];
+      const sanitizedStepDetails = rawStepDetails.map((detail, idx) => {
+        const type = detail.type || 'instruction';
+        const unit = type === 'instruction' ? 'none' : (detail.unit || 'seconds');
+        const duration = unit === 'none' ? 0 : (unit === 'seconds' ? (detail.duration !== undefined ? Number(detail.duration) : 15) : 0);
+        const quantity = (unit !== 'none' && unit !== 'seconds') ? (detail.quantity !== undefined ? Number(detail.quantity) : 10) : undefined;
+        const loops = ['inhale', 'hold', 'exhale', 'rest'].includes(type) ? (detail.loops !== undefined ? Number(detail.loops) : 5) : undefined;
+        const ttsCommand = detail.ttsCommand || detail.text || '';
+        const waitForTTS = detail.waitForTTS !== false;
+
+        return {
+          text: detail.text || '',
+          hint: detail.hint || '',
+          type,
+          unit,
+          duration,
+          quantity,
+          loops,
+          ttsCommand,
+          waitForTTS
+        };
+      });
+
       let savedElement: Exercise;
       if (formData.id) {
         // Edit mode
@@ -302,6 +379,7 @@ export default function App() {
         }
         const prevEx = currentList[index];
         const computedMediaType = (url: string) => {
+          if (formData.mediaSlides && formData.mediaSlides.length > 0) return 'slides';
           if (!url) return 'image';
           if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
           if (url.endsWith('.mp4') || url.includes('.mp4?')) return 'video';
@@ -310,6 +388,9 @@ export default function App() {
         const finalUnit = formData.targetUnit || 'minutes';
         const finalVal = formData.targetValue !== undefined ? Number(formData.targetValue) : 15;
         const finalDuration = finalUnit === 'minutes' ? finalVal : 0;
+
+        const mediaInputUrl = String(formData.mediaUrl || '');
+        const isVideoInput = mediaInputUrl.includes('youtube.com') || mediaInputUrl.includes('youtu.be') || mediaInputUrl.endsWith('.mp4') || mediaInputUrl.includes('.mp4?');
 
         savedElement = {
           ...prevEx,
@@ -320,9 +401,11 @@ export default function App() {
           descriptionID: language === 'ID' ? String(formData.description) : (prevEx.descriptionID || prevEx.description || String(formData.description)),
           stepsEN: language === 'EN' ? filteredSteps : (prevEx.stepsEN || prevEx.steps || filteredSteps),
           stepsID: language === 'ID' ? filteredSteps : (prevEx.stepsID || prevEx.steps || filteredSteps),
-          stepDetailsEN: language === 'EN' ? (formData.stepDetails || []) : (prevEx.stepDetailsEN || prevEx.stepDetails || formData.stepDetails || []),
-          stepDetailsID: language === 'ID' ? (formData.stepDetails || []) : (prevEx.stepDetailsID || prevEx.stepDetails || formData.stepDetails || []),
+          stepDetailsEN: language === 'EN' ? sanitizedStepDetails : (prevEx.stepDetailsEN || prevEx.stepDetails || sanitizedStepDetails),
+          stepDetailsID: language === 'ID' ? sanitizedStepDetails : (prevEx.stepDetailsID || prevEx.stepDetails || sanitizedStepDetails),
           mediaType: computedMediaType(formData.mediaUrl || ''),
+          videoUrl: isVideoInput ? mediaInputUrl : '',
+          slidesUrl: formData.mediaSlides || [],
           targetUnit: finalUnit,
           targetValue: finalVal,
           duration: finalDuration,
@@ -334,6 +417,7 @@ export default function App() {
         // Create mode
         const exId = `ex-${Date.now()}`;
         const computedMediaType = (url: string) => {
+          if (formData.mediaSlides && formData.mediaSlides.length > 0) return 'slides';
           if (!url) return 'image';
           if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
           if (url.endsWith('.mp4') || url.includes('.mp4?')) return 'video';
@@ -359,11 +443,13 @@ export default function App() {
           steps: filteredSteps,
           stepsEN: filteredSteps,
           stepsID: filteredSteps,
-          stepDetailsEN: formData.stepDetails || [],
-          stepDetailsID: formData.stepDetails || [],
+          stepDetailsEN: sanitizedStepDetails,
+          stepDetailsID: sanitizedStepDetails,
           mediaType: computedMediaType(formData.mediaUrl || ''),
           mediaUrl: String(formData.mediaUrl || 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=800'),
           mediaSlides: formData.mediaSlides || [],
+          videoUrl: (formData.mediaUrl && (formData.mediaUrl.includes('youtube.com') || formData.mediaUrl.includes('youtu.be') || formData.mediaUrl.endsWith('.mp4') || formData.mediaUrl.includes('.mp4?'))) ? formData.mediaUrl : '',
+          slidesUrl: formData.mediaSlides || [],
           loops: formData.loops || 5,
           vocalGuide: true,
           lungWaveD: true,
@@ -387,18 +473,24 @@ export default function App() {
   };
 
   // Delete exercise
-  const handleDeleteExercise = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete the exercise "${name}" from KeepFit API catalog? This will unsync this ID from mobile catalog.`)) return;
-
-    try {
-      const filtered = rawExercises.filter(item => item.id !== id);
-      await saveExercises(filtered);
-      addLog(`Deleted "${name}" successfully`, 'success');
-      if (selectedExercise?.id === id) setSelectedExercise(null);
-      loadSystemData();
-    } catch (e) {
-      addLog('Error invoking delete pipeline', 'warn');
-    }
+  const handleDeleteExercise = (id: string, name: string) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: language === 'EN' ? 'Delete Exercise' : 'Hapus Latihan',
+      message: language === 'EN' ? `Are you sure you want to delete the exercise "${name}" from KeepFit API catalog? This will unsync this ID from mobile catalog.` : `Apakah Anda yakin ingin menghapus latihan "${name}" dari katalog KeepFit? Tindakan ini akan menghapus ID ini dari katalog seluler.`,
+      onConfirm: async () => {
+        try {
+          const filtered = rawExercises.filter(item => item.id !== id);
+          await saveExercises(filtered);
+          addLog(language === 'EN' ? `Deleted "${name}" successfully` : `Berhasil menghapus "${name}"`, 'success');
+          if (selectedExercise?.id === id) setSelectedExercise(null);
+          loadSystemData();
+        } catch (e) {
+          addLog('Error invoking delete pipeline', 'warn');
+        }
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   // Save member
@@ -512,16 +604,22 @@ export default function App() {
   };
 
   // Delete member
-  const handleDeleteMember = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete the member "${name}"? This is irreversible.`)) return;
-
-    try {
-      await deleteMember(id);
-      addLog(`Deleted member successfully: "${name}"`, 'success');
-      loadSystemData();
-    } catch (err) {
-      addLog('Error deleting member from DB', 'warn');
-    }
+  const handleDeleteMember = (id: string, name: string) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: language === 'EN' ? 'Delete Member' : 'Hapus Anggota',
+      message: language === 'EN' ? `Are you sure you want to delete the member "${name}"? This is irreversible.` : `Apakah Anda yakin ingin menghapus anggota "${name}"? Tindakan ini bersifat permanen.`,
+      onConfirm: async () => {
+        try {
+          await deleteMember(id);
+          addLog(language === 'EN' ? `Deleted member successfully: "${name}"` : `Berhasil menghapus anggota: "${name}"`, 'success');
+          loadSystemData();
+        } catch (err) {
+          addLog('Error deleting member from DB', 'warn');
+        }
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   // Reset exercise form
@@ -534,7 +632,7 @@ export default function App() {
       calories: 120,
       description: '',
       steps: [''],
-      stepDetails: [{ text: '', duration: 15, type: 'instruction', hint: '', loops: 5, ttsCommand: '' }],
+      stepDetails: [{ text: '', duration: 0, type: 'instruction', hint: '', loops: 1, ttsCommand: '', unit: 'none', waitForTTS: true }],
       mediaType: 'image',
       mediaUrl: '',
       targetMuscles: ['Abdominals', 'Core'],
@@ -566,7 +664,17 @@ export default function App() {
           } else if (l.includes('stance') || l.includes('stand')) {
             type = 'static_hold'; duration = 30; hint = 'Stay low in stance.';
           }
-          return { text: s, duration, type, hint };
+          const unit = type === 'instruction' ? 'none' as const : 'seconds' as const;
+          return {
+            text: s,
+            duration: unit === 'none' ? 0 : duration,
+            type,
+            hint,
+            unit,
+            ttsCommand: s,
+            waitForTTS: true,
+            loops: ['inhale', 'hold', 'exhale', 'rest'].includes(type) ? 5 : undefined
+          };
         });
 
     setFormData({
@@ -580,9 +688,13 @@ export default function App() {
   const addStepRow = () => {
     const newDetail = {
       text: '',
-      duration: 15,
+      duration: 0,
       type: 'instruction' as const,
       hint: '',
+      unit: 'none' as const,
+      ttsCommand: '',
+      waitForTTS: true,
+      loops: 1
     };
     setFormData(p => ({
       ...p,
@@ -856,7 +968,7 @@ export default function App() {
     try {
       const parsedAchievedQty = achievedUnitsQty !== '' 
         ? Number(achievedUnitsQty) 
-        : (Number(linkedEx.targetValue) || Number(linkedEx.duration) || 15);
+         : (Number(linkedEx.targetValue) || Number(linkedEx.duration) || 15);
       
       const newAct: ActivityType = {
         id: `act-${Date.now()}`,
@@ -885,6 +997,78 @@ export default function App() {
     } finally {
       setSimulating(false);
     }
+  };
+
+  // Daily Steps Handlers
+  const handleSaveSteps = async (e: FormEvent) => {
+    e.preventDefault();
+    const stepsNum = Number(stepCount);
+    if (!stepsNum || stepsNum <= 0) {
+      alert('Please enter a valid positive number of steps.');
+      return;
+    }
+
+    if (!stepMemberId) {
+      alert('Please select a member to log steps for.');
+      return;
+    }
+
+    const member = members.find(m => m.id === stepMemberId);
+    if (!member) return;
+
+    setStepSaving(true);
+    try {
+      const distanceKm = Number((stepsNum * 0.00075).toFixed(2));
+      const caloriesBurned = Math.round(stepsNum * 0.04);
+
+      const log: DailyStepLog = {
+        id: `steps-${stepMemberId}-${stepDate}`,
+        userId: stepMemberId,
+        userName: member.fullName,
+        userAvatar: member.avatar || '',
+        date: stepDate,
+        steps: stepsNum,
+        caloriesBurned,
+        distanceKm,
+        updatedAt: new Date().toISOString()
+      };
+
+      await addOrUpdateDailyStepLog(log);
+      addLog(`Recorded ${stepsNum.toLocaleString()} steps for ${member.fullName} on ${stepDate}`, 'success');
+      setStepCount('');
+      
+      const freshStepLogs = await getDailyStepLogs();
+      setDailyStepLogs(freshStepLogs);
+      
+      const freshStats = await getStats();
+      setStats(freshStats);
+    } catch (err: any) {
+      addLog(`Failed to record steps: ${err.message || err}`, 'warn');
+    } finally {
+      setStepSaving(false);
+    }
+  };
+
+  const handleDeleteStepLog = (id: string, memberName: string, date: string) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: language === 'EN' ? 'Delete Step Log' : 'Hapus Catatan Langkah',
+      message: language === 'EN' ? `Are you sure you want to delete step log for ${memberName} on ${date}?` : `Apakah Anda yakin ingin menghapus catatan langkah untuk ${memberName} pada ${date}?`,
+      onConfirm: async () => {
+        try {
+          await deleteDailyStepLog(id);
+          addLog(language === 'EN' ? `Deleted step log for ${memberName} on ${date}` : `Berhasil menghapus catatan langkah ${memberName} pada ${date}`, 'success');
+          const freshStepLogs = await getDailyStepLogs();
+          setDailyStepLogs(freshStepLogs);
+          
+          const freshStats = await getStats();
+          setStats(freshStats);
+        } catch (err: any) {
+          addLog(`Failed to delete step log: ${err.message || err}`, 'warn');
+        }
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   // Filter exercises
@@ -1331,11 +1515,58 @@ export default function App() {
                             className={`cursor-pointer transition-all ${selectedExercise?.id === ex.id ? 'bg-[#27272a]/30' : 'hover:bg-[#27272a]/10'}`}
                           >
                             <td className="px-6 py-4">
-                              <div className="font-bold text-white text-base leading-tight flex items-center gap-2">
-                                {ex.title}
+                              <div className="flex gap-4 items-center">
+                                <div className="w-14 h-14 rounded-xl bg-zinc-950 border border-[#27272a] overflow-hidden shrink-0 flex items-center justify-center relative shadow-inner">
+                                  {(() => {
+                                    const slidesFromField = (ex.mediaSlides || ex.slidesUrl || []).filter(Boolean);
+                                    const rawMediaUrl = ex.mediaUrl || '';
+                                    const isMediaUrlVideo = rawMediaUrl && (
+                                      rawMediaUrl.includes('youtube.com') || 
+                                      rawMediaUrl.includes('youtu.be') || 
+                                      rawMediaUrl.endsWith('.mp4') || 
+                                      rawMediaUrl.includes('.mp4?') ||
+                                      ex.mediaType === 'video' ||
+                                      ex.mediaType === 'youtube'
+                                    );
+                                    const coverImage = !isMediaUrlVideo ? rawMediaUrl : '';
+                                    
+                                    const thumbSrc = slidesFromField.length > 0
+                                      ? slidesFromField[0]
+                                      : (coverImage || "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=200");
+
+                                    const isVid = isMediaUrlVideo;
+                                    return (
+                                      <>
+                                        <img 
+                                          src={thumbSrc} 
+                                          alt={ex.title} 
+                                          className="w-full h-full object-cover" 
+                                          referrerPolicy="no-referrer"
+                                          onError={(e) => {
+                                            (e.target as any).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=200";
+                                          }}
+                                        />
+                                        {isVid && (
+                                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                            <div className="w-6 h-6 rounded-full bg-emerald-500/90 text-white flex items-center justify-center shadow-md">
+                                              <svg className="w-3 h-3 fill-current ml-0.5" viewBox="0 0 24 24">
+                                                <path d="M8 5v14l11-7z" />
+                                              </svg>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-bold text-white text-base leading-tight flex items-center gap-2">
+                                    {ex.title}
+                                  </div>
+                                  <p className="text-xs text-[#a1a1aa] line-clamp-2 mt-1 font-medium">{ex.description}</p>
+                                </div>
                               </div>
-                              <p className="text-xs text-[#a1a1aa] line-clamp-2 mt-1 font-medium">{ex.description}</p>
-                              <div className="flex gap-1.5 mt-2 flex-wrap">
+                              <div className="flex gap-1.5 mt-2 flex-wrap pl-18">
                                 {ex.targetMuscles.map((muscle, index) => (
                                   <span key={index} className="px-1.5 py-0.5 bg-zinc-800/80 text-[#fafafa]/80 rounded text-[9px] font-mono font-bold">
                                     {muscle}
@@ -1405,18 +1636,62 @@ export default function App() {
                           }}
                           className={`p-4 space-y-3 cursor-pointer transition-all ${selectedExercise?.id === ex.id ? 'bg-[#27272a]/30' : 'active:bg-[#27272a]/10'}`}
                         >
-                          <div className="flex items-start justify-between gap-1.5">
-                            <div className="space-y-1">
-                              <h4 className="text-white font-bold leading-tight text-sm">
-                                {ex.title}
-                              </h4>
+                          <div className="flex gap-3.5 items-start">
+                            <div className="w-12 h-12 rounded-xl bg-zinc-950 border border-[#27272a] overflow-hidden shrink-0 flex items-center justify-center relative shadow-inner">
+                              {(() => {
+                                const slidesFromField = (ex.mediaSlides || ex.slidesUrl || []).filter(Boolean);
+                                const rawMediaUrl = ex.mediaUrl || '';
+                                const isMediaUrlVideo = rawMediaUrl && (
+                                  rawMediaUrl.includes('youtube.com') || 
+                                  rawMediaUrl.includes('youtu.be') || 
+                                  rawMediaUrl.endsWith('.mp4') || 
+                                  rawMediaUrl.includes('.mp4?') ||
+                                  ex.mediaType === 'video' ||
+                                  ex.mediaType === 'youtube'
+                                );
+                                const coverImage = !isMediaUrlVideo ? rawMediaUrl : '';
+                                
+                                const thumbSrc = slidesFromField.length > 0
+                                  ? slidesFromField[0]
+                                  : (coverImage || "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=150");
+
+                                const isVid = isMediaUrlVideo;
+                                return (
+                                  <>
+                                    <img 
+                                      src={thumbSrc} 
+                                      alt={ex.title} 
+                                      className="w-full h-full object-cover" 
+                                      referrerPolicy="no-referrer"
+                                      onError={(e) => {
+                                        (e.target as any).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=150";
+                                      }}
+                                    />
+                                    {isVid && (
+                                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                        <div className="w-5 h-5 rounded-full bg-emerald-500/90 text-white flex items-center justify-center shadow-md">
+                                          <svg className="w-2.5 h-2.5 fill-current ml-0.5" viewBox="0 0 24 24">
+                                            <path d="M8 5v14l11-7z" />
+                                          </svg>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
-                            <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold tracking-widest shrink-0 ${getCategoryBadgeStyle(ex.category)}`}>
-                              {getCategoryName(ex.category)}
-                            </span>
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <div className="flex items-start justify-between gap-1.5">
+                                <h4 className="text-white font-bold leading-tight text-xs truncate">
+                                  {ex.title}
+                                </h4>
+                                <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase font-bold tracking-wider shrink-0 ${getCategoryBadgeStyle(ex.category)}`}>
+                                  {getCategoryName(ex.category)}
+                                </span>
+                              </div>
+                              <p className="text-xs text-[#a1a1aa] line-clamp-2 font-medium">{ex.description}</p>
+                            </div>
                           </div>
-                          
-                          <p className="text-xs text-[#a1a1aa] line-clamp-2 font-medium">{ex.description}</p>
                           
                           <div className="flex items-center justify-between text-[11px] font-mono pt-1 text-[#a1a1aa]">
                             <span className="font-semibold">
@@ -1468,89 +1743,175 @@ export default function App() {
                         </button>
                       </div>
 
-                      {/* Header visual banner */}
-                      <div className="relative h-52 rounded-xl overflow-hidden bg-zinc-950 border border-[#27272a] flex flex-col justify-center items-center">
-                        {selectedExercise.mediaType === 'youtube' || (selectedExercise.mediaUrl && (selectedExercise.mediaUrl.includes('youtube.com') || selectedExercise.mediaUrl.includes('youtu.be'))) ? (
-                          <iframe 
-                            src={getYoutubeEmbedUrl(selectedExercise.mediaUrl)}
-                            title={selectedExercise.title}
-                            className="w-full h-full border-none"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                          />
-                        ) : selectedExercise.mediaType === 'video' ? (
-                          <video 
-                            src={selectedExercise.mediaUrl}
-                            controls 
-                            className="w-full h-full object-cover" 
-                            muted 
-                            loop 
-                            playsInline 
-                          />
-                        ) : (selectedExercise.mediaType === 'slides' || (selectedExercise.mediaSlides && selectedExercise.mediaSlides.length > 0)) ? (
-                          (() => {
-                            const slideList = selectedExercise.mediaSlides && selectedExercise.mediaSlides.length > 0 
-                              ? selectedExercise.mediaSlides 
-                              : [selectedExercise.mediaUrl];
-                            const activeIndex = practiceActive 
-                              ? (activeStepIdx % slideList.length) 
-                              : (currentSlideIdx % slideList.length);
-                            return (
-                              <div className="relative w-full h-full group">
-                                <img 
-                                  src={slideList[activeIndex]} 
-                                  alt={`Slide ${activeIndex + 1}`}
-                                  className="w-full h-full object-cover"
-                                  onError={(e) => {
-                                    (e.target as any).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=800"
-                                  }}
-                                />
-                                <div className="absolute inset-x-0 top-3 px-3 flex justify-between items-center bg-black/50 py-1 text-[9px] font-mono text-[#a1a1aa] tracking-widest font-bold rounded-md mx-2">
-                                  <span>SLIDE {activeIndex + 1} OF {slideList.length}</span>
-                                  {practiceActive && <span className="text-emerald-400 font-bold">SYNCD TO WORKOUT STEP</span>}
-                                </div>
-                                {!practiceActive && slideList.length > 1 && (
-                                  <div className="absolute inset-y-0 inset-x-0 flex justify-between items-center px-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setCurrentSlideIdx(prev => (prev - 1 + slideList.length) % slideList.length);
-                                      }}
-                                      className="p-1 w-6 h-6 flex items-center justify-center rounded-full bg-zinc-900/90 text-white hover:bg-zinc-800 text-xs font-mono font-bold cursor-pointer"
-                                    >
-                                      &lt;
-                                    </button>
-                                    <button 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setCurrentSlideIdx(prev => (prev + 1) % slideList.length);
-                                      }}
-                                      className="p-1 w-6 h-6 flex items-center justify-center rounded-full bg-zinc-900/90 text-white hover:bg-zinc-800 text-xs font-mono font-bold cursor-pointer"
-                                    >
-                                      &gt;
-                                    </button>
-                                  </div>
-                                )}
+                      {/* Header visual banner / Interactive media guide */}
+                      {(() => {
+                        const slidesFromField = (selectedExercise.mediaSlides || selectedExercise.slidesUrl || []).filter(Boolean);
+                        const hasRealSlides = slidesFromField.length > 0 && !slidesFromField.some(url => url.includes('photo-1544367567-0f2fcb009e0b'));
+                        const hasSlides = hasRealSlides || (selectedExercise.stepDetails && selectedExercise.stepDetails.length > 0);
+                        const hasVideo = selectedExercise.mediaUrl && (
+                          selectedExercise.mediaUrl.includes('youtube.com') ||
+                          selectedExercise.mediaUrl.includes('youtu.be') ||
+                          selectedExercise.mediaUrl.endsWith('.mp4') ||
+                          selectedExercise.mediaUrl.includes('.mp4?') ||
+                          selectedExercise.mediaType === 'video' ||
+                          selectedExercise.mediaType === 'youtube'
+                        );
+
+                        return (
+                          <div className="space-y-3">
+                            {/* Segment toggle if both exist */}
+                            {hasSlides && hasVideo && (
+                              <div className="flex bg-[#121214] p-1 border border-[#27272a] rounded-xl animate-fadeIn">
+                                <button
+                                  type="button"
+                                  onClick={() => setExerciseMediaTab('slides')}
+                                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold font-sans cursor-pointer transition-all ${
+                                    exerciseMediaTab === 'slides' 
+                                      ? 'bg-zinc-900 border border-[#27272a] text-white' 
+                                      : 'text-[#a1a1aa] hover:text-white hover:bg-zinc-950/20'
+                                  }`}
+                                >
+                                  🖼️ {hasRealSlides ? `Slides (${slidesFromField.length})` : `Breathing Guide (${selectedExercise.stepDetails?.length || 0})`}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setExerciseMediaTab('video')}
+                                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold font-sans cursor-pointer transition-all ${
+                                    exerciseMediaTab === 'video' 
+                                      ? 'bg-zinc-900 border border-[#27272a] text-white' 
+                                      : 'text-[#a1a1aa] hover:text-white hover:bg-zinc-950/20'
+                                  }`}
+                                >
+                                  🎥 Video Playback
+                                </button>
                               </div>
-                            );
-                          })()
-                        ) : (
-                          <img 
-                            src={selectedExercise.mediaUrl} 
-                            alt={selectedExercise.title}
-                            className="w-full h-full object-cover transition-all duration-700 hover:scale-105"
-                            onError={(e) => {
-                              (e.target as any).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=800"
-                            }}
-                          />
-                        )}
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-zinc-950 to-transparent p-4 flex items-end justify-between pointer-events-none">
-                          <span className="px-2 py-1 bg-zinc-950/85 border border-[#27272a] text-white rounded text-[9px] font-mono font-bold uppercase flex items-center gap-1.5 shadow-lg">
-                            {selectedExercise.mediaType === 'video' ? <Video className="w-3 h-3 text-emerald-400" /> : selectedExercise.mediaType === 'youtube' ? <Video className="w-3 h-3 text-red-400" /> : selectedExercise.mediaType === 'slides' ? <Layers className="w-3 h-3 text-blue-400" /> : <ImageIcon className="w-3 h-3 text-emerald-400" />}
-                            <span>{selectedExercise.mediaType?.toUpperCase() || 'IMAGE'}</span>
-                          </span>
-                        </div>
-                      </div>
+                            )}
+
+                            {/* Main Display Area */}
+                            <div className="relative h-56 rounded-xl overflow-hidden bg-zinc-950 border border-[#27272a] flex flex-col justify-center items-center">
+                              {exerciseMediaTab === 'video' && hasVideo ? (
+                                // Render Video guide
+                                (selectedExercise.mediaUrl.includes('youtube.com') || selectedExercise.mediaUrl.includes('youtu.be') || selectedExercise.mediaType === 'youtube') ? (
+                                  <iframe 
+                                    src={getYoutubeEmbedUrl(selectedExercise.mediaUrl)}
+                                    title={selectedExercise.title}
+                                    className="w-full h-full border-none"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    allowFullScreen
+                                  />
+                                ) : (
+                                  <video 
+                                    src={selectedExercise.mediaUrl}
+                                    controls 
+                                    className="w-full h-full object-cover" 
+                                    muted 
+                                    loop 
+                                    playsInline 
+                                  />
+                                )
+                              ) : (
+                                // Render Slides or continuous images
+                                (() => {
+                                  // Determine list of items to slide through
+                                  const slideList = hasRealSlides 
+                                    ? slidesFromField 
+                                    : (selectedExercise.stepDetails && selectedExercise.stepDetails.length > 0 
+                                      ? selectedExercise.stepDetails 
+                                      : [null]);
+
+                                  const activeIndex = practiceActive 
+                                    ? (activeStepIdx % slideList.length) 
+                                    : (currentSlideIdx % slideList.length);
+
+                                  const activeItem = slideList[activeIndex];
+
+                                  return (
+                                    <div className="relative w-full h-full group">
+                                      {hasRealSlides && typeof activeItem === 'string' ? (
+                                        <img 
+                                          src={activeItem} 
+                                          alt={`Slide ${activeIndex + 1}`}
+                                          className="w-full h-full object-cover"
+                                          referrerPolicy="no-referrer"
+                                          onError={(e) => {
+                                            (e.target as any).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=800"
+                                          }}
+                                        />
+                                      ) : (
+                                        // Render our stunning procedural step diagram
+                                        <KatedaStepDiagram
+                                          stepType={activeItem?.type || 'instruction'}
+                                          stepText={activeItem?.text || selectedExercise.title}
+                                          stepHint={activeItem?.hint}
+                                          isPlaying={isPlaying}
+                                          secondsLeft={practiceActive ? secondsLeft : undefined}
+                                          totalDuration={practiceActive ? activeItem?.duration : undefined}
+                                          activeLoop={practiceActive ? activeLoopCount : undefined}
+                                          maxLoops={practiceActive ? (activeItem?.loops || selectedExercise.loops || 5) : undefined}
+                                        />
+                                      )}
+
+                                      {slideList.length > 1 && (
+                                        <div className="absolute inset-x-0 top-3 px-3 flex justify-between items-center bg-black/65 py-1 text-[9px] font-mono text-[#fafafa] tracking-wider font-bold rounded-md mx-2 border border-[#27272a]/40 z-20">
+                                          <span>SLIDE {activeIndex + 1} OF {slideList.length}</span>
+                                          {practiceActive && <span className="text-emerald-400 font-bold">SYNCD TO WORKOUT STEP</span>}
+                                        </div>
+                                      )}
+                                      {!practiceActive && slideList.length > 1 && (
+                                        <div className="absolute inset-y-0 inset-x-0 flex justify-between items-center px-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                          <button 
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setCurrentSlideIdx(prev => (prev - 1 + slideList.length) % slideList.length);
+                                            }}
+                                            className="p-1 w-6 h-6 flex items-center justify-center rounded-full bg-zinc-950 text-white hover:bg-zinc-850 text-xs font-mono font-bold cursor-pointer border border-[#27272a]"
+                                            title="Prev Slide"
+                                          >
+                                            &lt;
+                                          </button>
+                                          <button 
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setCurrentSlideIdx(prev => (prev + 1) % slideList.length);
+                                            }}
+                                            className="p-1 w-6 h-6 flex items-center justify-center rounded-full bg-zinc-950 text-white hover:bg-zinc-850 text-xs font-mono font-bold cursor-pointer border border-[#27272a]"
+                                            title="Next Slide"
+                                          >
+                                            &gt;
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()
+                              )}
+
+                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-zinc-950 to-transparent p-4 flex items-end justify-between pointer-events-none z-10">
+                                <span className="px-2 py-1 bg-zinc-950/85 border border-[#27272a]/80 text-[#fafafa] rounded text-[9px] font-mono font-bold uppercase flex items-center gap-1.5 shadow-lg">
+                                  {exerciseMediaTab === 'video' ? (
+                                    <>
+                                      <Video className="w-3 h-3 text-red-500" />
+                                      <span>VIDEO REFERENCE</span>
+                                    </>
+                                  ) : hasRealSlides ? (
+                                    <>
+                                      <Layers className="w-3 h-3 text-blue-400" />
+                                      <span>SLIDE PRESENTATION</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Activity className="w-3 h-3 text-emerald-400" />
+                                      <span>BREATH LOCK MATRIX</span>
+                                    </>
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Info lines */}
                       <div className="space-y-2">
@@ -1785,7 +2146,28 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Navigation toggle pills */}
+              <div className="flex bg-[#18181b] p-1 border border-[#27272a] rounded-xl self-start w-fit">
+                <button
+                  type="button"
+                  onClick={() => setActivitiesSubTab('workouts')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all flex items-center gap-2 cursor-pointer ${activitiesSubTab === 'workouts' ? 'bg-[#27272a] text-white shadow-xs border border-zinc-805' : 'text-[#a1a1aa] hover:text-white'}`}
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>Workout Session Logs</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActivitiesSubTab('steps')}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all flex items-center gap-2 cursor-pointer ${activitiesSubTab === 'steps' ? 'bg-[#27272a] text-white shadow-xs border border-zinc-805' : 'text-[#a1a1aa] hover:text-white'}`}
+                >
+                  <Footprints className="w-3.5 h-3.5" />
+                  <span>Daily Steps Tracker</span>
+                </button>
+              </div>
+
+              {activitiesSubTab === 'workouts' ? (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 
                 {/* Left side: Trainer Workout Session Logger form widget */}
                 <div className="bg-[#18181b] border border-[#27272a] rounded-2xl p-6 self-start flex flex-col justify-between animate-fadeIn" id="mobile-simulation-widget">
@@ -2059,6 +2441,186 @@ export default function App() {
                 </div>
 
               </div>
+              ) : (
+                /* Daily steps sub-tab view */
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fadeIn" id="daily-steps-view">
+                  {/* Left Column: Form to manual-log steps */}
+                  <div className="bg-[#18181b] border border-[#27272a] rounded-2xl p-6 self-start flex flex-col justify-between" id="steps-form-widget">
+                    <div className="space-y-1 mb-5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 bg-[#09090b] text-[#fafafa] border border-[#27272a] text-[9px] font-mono uppercase font-bold text-emerald-400">Step Recorder</span>
+                        <span className="text-[10px] font-mono text-zinc-400">offline-first</span>
+                      </div>
+                      <h4 className="text-base font-bold text-white mt-1">Manual Steps Logger</h4>
+                      <p className="text-xs text-[#a1a1aa]">Log physical steps directly into practitioner timelines.</p>
+                    </div>
+
+                    <form onSubmit={handleSaveSteps} className="space-y-4">
+                      {/* Member Selection */}
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Select Practitioner</label>
+                        <select 
+                          value={stepMemberId}
+                          onChange={(e) => setStepMemberId(e.target.value)}
+                          required
+                          className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        >
+                          {members.map(m => (
+                            <option key={m.id} value={m.id} className="bg-[#18181b]">
+                              {m.fullName} (Sabuk {m.beltLevel})
+                            </option>
+                          ))}
+                          {members.length === 0 && (
+                            <option value="">No members found in DB</option>
+                          )}
+                        </select>
+                      </div>
+
+                      {/* Date selection */}
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Activity Date</label>
+                        <input 
+                          type="date"
+                          value={stepDate}
+                          onChange={(e) => setStepDate(e.target.value)}
+                          required
+                          className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                        />
+                      </div>
+
+                      {/* Steps count input */}
+                      <div>
+                        <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Daily Steps Count</label>
+                        <div className="relative">
+                          <input 
+                            type="number" 
+                            placeholder="e.g. 8000" 
+                            value={stepCount}
+                            onChange={(e) => setStepCount(e.target.value)}
+                            required
+                            min="1"
+                            className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                          />
+                          <span className="absolute right-3 top-2 text-[10px] font-mono text-[#a1a1aa] uppercase font-bold">
+                            steps
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Expected calculated metrics preview */}
+                      {stepCount && Number(stepCount) > 0 && (
+                        <div className="bg-[#09090b] border border-[#27272a] rounded-xl p-3 space-y-3">
+                          <div className="text-[9px] font-mono uppercase text-emerald-400 font-bold">Est. Physical Expenditure metrics</div>
+                          <div className="grid grid-cols-2 gap-2 text-center">
+                            <div className="bg-[#18181b] border border-[#27272a] p-2 rounded-lg">
+                              <div className="text-[10px] text-zinc-400">Distance</div>
+                              <div className="text-xs font-bold text-white font-mono mt-0.5">{(Number(stepCount) * 0.00075).toFixed(2)} KM</div>
+                            </div>
+                            <div className="bg-[#18181b] border border-[#27272a] p-2 rounded-lg">
+                              <div className="text-[10px] text-zinc-400">Calories Burned</div>
+                              <div className="text-xs font-bold text-emerald-400 font-mono mt-0.5">{Math.round(Number(stepCount) * 0.04)} kcal</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <button 
+                        type="submit"
+                        disabled={stepSaving || !stepCount}
+                        className={`w-full font-bold py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer font-sans shadow-md ${
+                          stepSaving || !stepCount ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700/50' : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                      >
+                        <Footprints className="w-4 h-4" />
+                        <span>{stepSaving ? 'Recording Logs...' : 'Record Daily Steps'}</span>
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Right Column (2/3 width): Steps log history table */}
+                  <div className="bg-[#18181b] border border-[#27272a] rounded-2xl lg:col-span-2 overflow-hidden self-start">
+                    <div className="p-6 border-b border-[#27272a] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div>
+                        <h4 className="text-base font-bold text-white flex items-center gap-2">
+                          <Calendar className="w-5 h-5 text-emerald-400" />
+                          <span>Logged Physical Steps History</span>
+                        </h4>
+                        <p className="text-xs text-[#a1a1aa] mt-0.5">List of verified daily steps metrics synchronized with active databases.</p>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-[#27272a] bg-[#09090b] text-[10px] font-mono text-[#a1a1aa] uppercase tracking-wider select-none">
+                            <th className="px-4 py-3">Practitioner</th>
+                            <th className="px-4 py-3 text-center">Date</th>
+                            <th className="px-4 py-3 text-center">Steps Count</th>
+                            <th className="px-4 py-3 text-center">Estimated Metrics</th>
+                            <th className="px-4 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#27272a] text-xs">
+                          {dailyStepLogs.map((log) => (
+                            <tr key={log.id} className="hover:bg-[#1f1f23]/40 transition-colors">
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-3">
+                                  <img 
+                                    src={log.userAvatar || `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 900000)}?auto=format&fit=facearea&facepad=2&w=128&h=128&q=80`} 
+                                    referrerPolicy="no-referrer"
+                                    className="w-8 h-8 rounded-full border border-[#27272a] bg-zinc-900 object-cover" 
+                                    alt="" 
+                                  />
+                                  <div>
+                                    <span className="text-white block font-bold leading-normal truncate max-w-xs">{log.userName}</span>
+                                    <span className="text-[10px] text-zinc-400 font-mono">UID: {log.userId}</span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-center font-mono whitespace-nowrap">
+                                <span className="bg-[#09090b] border border-[#27272a] px-2 py-1 rounded text-zinc-300">
+                                  {log.date}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <div className="text-emerald-400 font-mono font-black text-sm flex items-center justify-center gap-1">
+                                  <Footprints className="w-3.5 h-3.5 inline text-emerald-400" />
+                                  <span>{log.steps.toLocaleString()}</span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-center whitespace-nowrap">
+                                <div className="text-white font-mono font-bold text-xs">
+                                  {log.distanceKm !== undefined ? `${log.distanceKm} KM` : '-- KM'}
+                                </div>
+                                <div className="text-[10px] text-zinc-400 font-mono mt-0.5">
+                                  {log.caloriesBurned !== undefined ? `${log.caloriesBurned} kcal` : '-- kcal'}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteStepLog(log.id, log.userName, log.date)}
+                                  className="p-1 px-2.5 bg-red-950/20 hover:bg-red-950/60 border border-red-500/10 text-red-500 hover:text-red-400 text-[10px] font-bold font-mono rounded-lg transition-all cursor-pointer inline-flex items-center gap-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Delete</span>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {dailyStepLogs.length === 0 && (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-8 text-center text-zinc-500 font-medium">
+                                No physical step logs recorded yet for any active practitioners.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2747,7 +3309,6 @@ export default function App() {
                   >
                     <option value="minutes">⏱️ Minutes</option>
                     <option value="reps">🔁 Reps (Repetitions)</option>
-                    <option value="steps">🚶 Steps (Walking)</option>
                     <option value="series">🧩 Series (Forms/Jurus)</option>
                     <option value="cycles">🔄 Cycles (Breaths)</option>
                   </select>
@@ -2782,10 +3343,10 @@ export default function App() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Primary Media URL / Illustration Link</label>
+                  <label className="block text-[10px] font-mono uppercase text-[#a1a1aa] font-bold mb-1">Video URL (Demonstration)</label>
                   <input 
                     type="text" 
-                    placeholder="https://images.unsplash.com/photo-... or YouTube link"
+                    placeholder="E.g., YouTube link or direct MP4 URL"
                     value={formData.mediaUrl || ''}
                     onChange={(e) => setFormData(p => ({ ...p, mediaUrl: e.target.value }))}
                     className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-white"
@@ -2801,6 +3362,131 @@ export default function App() {
                     className="w-full bg-[#09090b] border border-[#27272a] rounded-xl px-3 py-2 text-white"
                   />
                 </div>
+              </div>
+
+              {/* Diagram Carousel Slides Manager (Multi-Image Slideshow) */}
+              <div className="bg-[#121214] border border-[#27272a] rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-mono uppercase font-bold text-emerald-400">Diagram Carousel Slides (Multi-Image)</span>
+                    <p className="text-[9px] text-[#a1a1aa] mt-0.5">Configure sequential images/diagrams for step-by-step guidance slides.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentSlides = formData.mediaSlides || [];
+                      setFormData(p => ({
+                        ...p,
+                        mediaSlides: [...currentSlides, '']
+                      }));
+                    }}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-bold font-mono py-1 px-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/20 flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    + Add Slide Image URL
+                  </button>
+                </div>
+
+                {(!formData.mediaSlides || formData.mediaSlides.length === 0) ? (
+                  <div className="text-center py-4 bg-zinc-950/40 border border-[#27272a]/40 border-dashed rounded-lg text-[10px] text-[#a1a1aa] font-mono">
+                    No custom slides added. If left blank, a default placeholder/mock illustration will be displayed as a slide.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
+                    {formData.mediaSlides.map((slide, sIdx) => (
+                      <div key={sIdx} className="flex items-center gap-2.5 bg-zinc-950 p-2 border border-[#27272a] rounded-xl">
+                        <span className="text-[9px] font-mono font-bold text-emerald-400 w-16 text-center bg-emerald-950/55 rounded py-1 px-1.5 border border-emerald-500/10 shrink-0">
+                          SLIDE {sIdx + 1}
+                        </span>
+                        
+                        {/* Slide Thumbnail Preview if URL is set */}
+                        <div className="w-8 h-8 rounded bg-zinc-900 border border-[#27272a] overflow-hidden shrink-0 flex items-center justify-center">
+                          {slide ? (
+                            <img 
+                              src={slide} 
+                              alt="thumb" 
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                (e.target as any).src = "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=80"
+                              }}
+                            />
+                          ) : (
+                            <div className="text-[8px] text-[#a1a1aa] font-bold">N/A</div>
+                          )}
+                        </div>
+
+                        <input 
+                          type="text" 
+                          placeholder="e.g. https://images.unsplash.com/photo-..."
+                          value={slide}
+                          onChange={(e) => {
+                            const updated = [...(formData.mediaSlides || [])];
+                            updated[sIdx] = e.target.value;
+                            setFormData(p => ({ ...p, mediaSlides: updated }));
+                          }}
+                          className="flex-1 min-w-0 bg-[#09090b] border border-[#27272a]/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-[#52525b]"
+                        />
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          {/* Move up */}
+                          <button
+                            type="button"
+                            disabled={sIdx === 0}
+                            onClick={() => {
+                              if (sIdx === 0) return;
+                              const updated = [...(formData.mediaSlides || [])];
+                              const temp = updated[sIdx];
+                              updated[sIdx] = updated[sIdx - 1];
+                              updated[sIdx - 1] = temp;
+                              setFormData(p => ({ ...p, mediaSlides: updated }));
+                            }}
+                            className="p-1 text-[#a1a1aa] hover:text-white bg-zinc-900 hover:bg-zinc-850 disabled:opacity-20 disabled:hover:bg-transparent rounded cursor-pointer transition-colors"
+                            title="Move Up"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 15l7-7 7 7" />
+                            </svg>
+                          </button>
+
+                          {/* Move down */}
+                          <button
+                            type="button"
+                            disabled={sIdx === (formData.mediaSlides || []).length - 1}
+                            onClick={() => {
+                              const list = formData.mediaSlides || [];
+                              if (sIdx === list.length - 1) return;
+                              const updated = [...list];
+                              const temp = updated[sIdx];
+                              updated[sIdx] = updated[sIdx + 1];
+                              updated[sIdx + 1] = temp;
+                              setFormData(p => ({ ...p, mediaSlides: updated }));
+                            }}
+                            className="p-1 text-[#a1a1aa] hover:text-white bg-zinc-900 hover:bg-zinc-850 disabled:opacity-20 disabled:hover:bg-transparent rounded cursor-pointer transition-colors"
+                            title="Move Down"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
+
+                          {/* Remove */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = (formData.mediaSlides || []).filter((_, innerIdx) => innerIdx !== sIdx);
+                              setFormData(p => ({ ...p, mediaSlides: updated }));
+                            }}
+                            className="p-1 text-rose-500 hover:text-rose-400 hover:bg-rose-950/20 rounded cursor-pointer transition-colors"
+                            title="Remove"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="bg-zinc-900/60 p-4 border border-[#27272a] rounded-xl">
@@ -2873,12 +3559,19 @@ export default function App() {
                       </div>
 
                       {/* Step secondary timing details parameters */}
-                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 text-[11px]">
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 text-[11px]">
                         <div>
                           <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">State Type</label>
                           <select 
                             value={detail.type || 'instruction'}
-                            onChange={(e) => updateStepRow(idx, { type: e.target.value as any })}
+                            onChange={(e) => {
+                              const nuType = e.target.value as any;
+                              // Default unit to none for instruction, default to seconds for active types
+                              updateStepRow(idx, { 
+                                type: nuType,
+                                unit: nuType === 'instruction' ? 'none' : (detail.unit === 'none' ? 'seconds' : detail.unit)
+                              });
+                            }}
                             className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-2 py-1.5 text-white"
                           >
                             <option value="instruction">Instruction</option>
@@ -2892,21 +3585,22 @@ export default function App() {
                         </div>
 
                         <div>
-                          <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">Target Unit</label>
+                          <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">Target Metric</label>
                           <select 
                             value={detail.unit || 'seconds'}
                             onChange={(e) => {
                               const newUnit = e.target.value as any;
                               updateStepRow(idx, { 
                                 unit: newUnit,
-                                quantity: newUnit !== 'seconds' ? (detail.quantity || 10) : undefined 
+                                quantity: (newUnit !== 'seconds' && newUnit !== 'none') ? (detail.quantity || 10) : undefined,
+                                duration: newUnit === 'none' ? 0 : (detail.duration || 15)
                               });
                             }}
                             className="w-full bg-[#09090b] border border-[#27272a] rounded-lg px-2 py-1.5 text-white"
                           >
+                            <option value="none">✨ None (Auto / Manual)</option>
                             <option value="seconds">⏱️ Seconds</option>
                             <option value="reps">🔁 Reps (Repetitions)</option>
-                            <option value="steps">🚶 Steps (Walking)</option>
                             <option value="series">🧩 Series (Forms/Jurus)</option>
                             <option value="cycles">🔄 Cycles (Breaths)</option>
                           </select>
@@ -2914,9 +3608,13 @@ export default function App() {
                         
                         <div>
                           <label className="block text-[9px] font-mono uppercase text-[#a1a1aa] mb-1">
-                            {(!detail.unit || detail.unit === 'seconds') ? 'Duration (Sec)' : `Target ${detail.unit}`}
+                            {detail.unit === 'none' ? 'Target Metric' : (!detail.unit || detail.unit === 'seconds') ? 'Duration (Sec)' : `Target ${detail.unit}`}
                           </label>
-                          {(!detail.unit || detail.unit === 'seconds') ? (
+                          {detail.unit === 'none' ? (
+                            <div className="w-full bg-[#09090b]/40 border border-[#27272a]/40 rounded-lg py-1.5 text-center text-emerald-400 font-mono text-[9px] font-bold uppercase select-none">
+                              Voice / Tap
+                            </div>
+                          ) : (!detail.unit || detail.unit === 'seconds') ? (
                             <input 
                               type="number" 
                               value={detail.duration || 15}
@@ -2948,8 +3646,8 @@ export default function App() {
                           />
                         </div>
 
-                        <div className="col-span-2 md:col-span-1">
-                          <label className="block text-[9px] font-mono uppercase text-[#fafafa] font-bold mb-1">📣 TTS Speech Command</label>
+                        <div>
+                          <label className="block text-[9px] font-mono uppercase text-[#fafafa] font-bold mb-1 font-mono">📣 Speech Cues</label>
                           <input 
                             type="text" 
                             value={detail.ttsCommand || ''}
@@ -2957,6 +3655,21 @@ export default function App() {
                             onChange={(e) => updateStepRow(idx, { ttsCommand: e.target.value })}
                             className="w-full bg-[#09090b] border border-amber-500/20 rounded-lg px-2 py-1 text-amber-300 font-semibold"
                           />
+                        </div>
+
+                        <div>
+                          <label className="block text-[9px] font-mono uppercase text-[#fafafa] font-bold mb-1 font-mono">🔊 Voice Sync</label>
+                          <button
+                            type="button"
+                            onClick={() => updateStepRow(idx, { waitForTTS: detail.waitForTTS !== false ? false : true })}
+                            className={`w-full py-1.5 px-3 rounded-lg border text-[10px] font-mono font-bold transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer ${
+                              detail.waitForTTS !== false 
+                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' 
+                                : 'bg-[#09090b] border-[#27272a] text-zinc-400 hover:text-zinc-200'
+                            }`}
+                          >
+                            {detail.waitForTTS !== false ? '🎙️ Wait for Voice' : '⚡ No Waiting'}
+                          </button>
                         </div>
                       </div>
 
@@ -3000,6 +3713,42 @@ export default function App() {
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM IN-APP CONFIRMATION MODAL */}
+      {confirmConfig.isOpen && (
+        <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999] animate-fadeIn" id="custom-confirm-modal">
+          <div className="bg-[#18181b] border border-[#27272a] rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-full bg-rose-950/40 border border-rose-500/20 flex items-center justify-center text-rose-500 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="space-y-1.5 flex-1">
+                <h4 className="text-sm font-bold text-white font-sans">{confirmConfig.title}</h4>
+                <p className="text-xs text-[#a1a1aa] leading-relaxed font-sans">{confirmConfig.message}</p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-[#27272a]/40">
+              <button
+                type="button"
+                onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+                className="bg-zinc-900 hover:bg-zinc-800 text-[#a1a1aa] hover:text-white border border-[#27272a]/80 rounded-xl px-4 py-2 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                {language === 'EN' ? 'Cancel' : 'Batal'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  confirmConfig.onConfirm();
+                }}
+                className="bg-rose-600 hover:bg-rose-500 text-white rounded-xl px-4 py-2 text-xs font-semibold cursor-pointer transition-all shadow-md shadow-rose-500/10"
+              >
+                {language === 'EN' ? 'Confirm Delete' : 'Konfirmasi Hapus'}
+              </button>
+            </div>
           </div>
         </div>
       )}

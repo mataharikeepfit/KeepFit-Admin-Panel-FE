@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { Exercise, Category, Activity, KeepFitStats, BeltLevelInfo, BELT_LEVELS, Member } from './types';
+import { Exercise, Category, Activity, KeepFitStats, BeltLevelInfo, BELT_LEVELS, Member, DailyStepLog } from './types';
 
 // Storage Key for Local Browser Database
 const LOCAL_STORAGE_KEY = 'keepfit_db';
@@ -102,6 +102,7 @@ interface InBrowserDb {
   activities: Activity[];
   beltLevels?: BeltLevelInfo[];
   members?: Member[];
+  dailySteps?: DailyStepLog[];
 }
 
 function readLocalStorageDb(): InBrowserDb {
@@ -112,7 +113,8 @@ function readLocalStorageDb(): InBrowserDb {
       categories: categoryTemplates,
       activities: activityTemplates,
       beltLevels: BELT_LEVELS,
-      members: memberTemplates
+      members: memberTemplates,
+      dailySteps: []
     };
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(initial));
     return initial;
@@ -162,6 +164,10 @@ function readLocalStorageDb(): InBrowserDb {
       db.members = memberTemplates;
       modified = true;
     }
+    if (!db.dailySteps || !Array.isArray(db.dailySteps)) {
+      db.dailySteps = [];
+      modified = true;
+    }
 
     if (modified) {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(db));
@@ -174,7 +180,8 @@ function readLocalStorageDb(): InBrowserDb {
       categories: categoryTemplates,
       activities: activityTemplates,
       beltLevels: BELT_LEVELS,
-      members: memberTemplates
+      members: memberTemplates,
+      dailySteps: []
     };
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(initial));
     return initial;
@@ -187,7 +194,8 @@ export async function resetEntireDatabase(): Promise<void> {
     categories: categoryTemplates,
     activities: activityTemplates,
     beltLevels: BELT_LEVELS,
-    members: memberTemplates
+    members: memberTemplates,
+    dailySteps: []
   };
   localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(initial));
 
@@ -198,6 +206,11 @@ export async function resetEntireDatabase(): Promise<void> {
       await supabase.from('activities').delete().neq('id', 'placeholder-none');
       await supabase.from('exercises').delete().neq('id', 'placeholder-none');
       await supabase.from('categories').delete().neq('id', 'placeholder-none');
+      try {
+        await supabase.from('daily_steps').delete().neq('id', 'placeholder-none');
+      } catch (e) {
+        // Safe check
+      }
       try {
         await supabase.from('belt_levels').delete().neq('id', 'placeholder-none');
       } catch (e) {
@@ -360,8 +373,47 @@ export async function saveBeltLevels(belts: BeltLevelInfo[]): Promise<void> {
 // CLIENT-SIDE ASYNC CRUD FUNCTIONS
 // ---------------------------------------------------------------------------
 
+// Helper function to map database/localStorage records consistently
+function mapExerciseRow(row: any): Exercise {
+  const steps = row.stepsEN || row.stepsID || row.steps || [];
+  const stepDetails = row.stepDetailsEN || row.stepDetailsID || row.stepDetails || [];
+  
+  // Safe extraction of slide images
+  const slidesFromField = (row.slidesUrl || row.mediaSlides || []).filter(Boolean);
+  
+  // If videoUrl is actually an image URL, or if there is no slidesUrl but we have a mediaUrl/videoUrl
+  const isVideoUrlActualVideo = row.videoUrl && (
+    row.videoUrl.includes('youtube.com') ||
+    row.videoUrl.includes('youtu.be') ||
+    row.videoUrl.endsWith('.mp4') ||
+    row.videoUrl.includes('.mp4?')
+  );
+  
+  const videoUrlVal = isVideoUrlActualVideo ? row.videoUrl : '';
+  const coverUrlVal = !isVideoUrlActualVideo ? (row.videoUrl || row.mediaUrl || '') : (row.mediaUrl || '');
+
+  return {
+    ...row,
+    // Fallbacks to maintain backward compatibility with existing single-language selectors
+    title: row.titleEN || row.titleID || row.title || '',
+    description: row.descriptionEN || row.descriptionID || row.description || '',
+    steps: steps,
+    stepDetails: stepDetails,
+    targetUnit: row.targetUnit || 'minutes',
+    targetValue: row.targetValue !== undefined ? Number(row.targetValue) : (row.duration || 15),
+    
+    // Support either schema column transparently
+    videoUrl: videoUrlVal,
+    slidesUrl: slidesFromField,
+    mediaUrl: videoUrlVal || coverUrlVal || (slidesFromField.length > 0 ? slidesFromField[0] : ''),
+    mediaSlides: slidesFromField
+  } as Exercise;
+}
+
 export async function getExercises(): Promise<Exercise[]> {
   const supabase = getSupabaseClient();
+  let rows: any[] = [];
+  
   if (supabase) {
     const { data, error } = await supabase
       .from('exercises')
@@ -372,19 +424,12 @@ export async function getExercises(): Promise<Exercise[]> {
       throw new Error(`Supabase exercises fetch failed: ${error.message} (Target Table: 'exercises')`);
     }
 
-    const rows = data || [];
-    return rows.map((row: any) => ({
-      ...row,
-      // Fallbacks to maintain backward compatibility with existing single-language selectors
-      title: row.titleEN || row.titleID || '',
-      description: row.descriptionEN || row.descriptionID || '',
-      steps: row.stepsEN || row.stepsID || [],
-      stepDetails: row.stepDetailsEN || row.stepDetailsID || [],
-      targetUnit: row.targetUnit || 'minutes',
-      targetValue: row.targetValue !== undefined ? Number(row.targetValue) : (row.duration || 15)
-    })) as Exercise[];
+    rows = data || [];
+  } else {
+    rows = readLocalStorageDb().exercises || [];
   }
-  return readLocalStorageDb().exercises;
+
+  return rows.map(mapExerciseRow);
 }
 
 export async function saveExercises(exercises: Exercise[]): Promise<void> {
@@ -433,12 +478,9 @@ export async function saveExercises(exercises: Exercise[]): Promise<void> {
           stepsID: stepsID,
           stepDetailsEN: detailsEN,
           stepDetailsID: detailsID,
-          mediaType: ex.mediaType || 'image',
-          mediaUrl: ex.mediaUrl || '',
-          mediaSlides: ex.mediaSlides || [],
+          videoUrl: ex.videoUrl || ex.mediaUrl || '',
+          slidesUrl: ex.slidesUrl || ex.mediaSlides || [],
           loops: Number(ex.loops) || 1,
-          vocalGuide: ex.vocalGuide !== undefined ? ex.vocalGuide : true,
-          lungWaveD: ex.lungWaveD !== undefined ? ex.lungWaveD : true,
           targetMuscles: ex.targetMuscles || [],
           katedaSpecific: ex.katedaSpecific || false,
           updatedAt: ex.updatedAt || new Date().toISOString(),
@@ -694,7 +736,7 @@ export function generateFallbackStepDetails(ex: Exercise): any[] {
       hint = 'Perform explosive repetitions. Breathe out hard on impact.';
     } else {
       type = 'instruction';
-      duration = 15;
+      duration = 0;
       hint = 'Prepare posture and execute the required motion coordinates.';
     }
 
@@ -717,16 +759,20 @@ export function generateFallbackStepDetails(ex: Exercise): any[] {
     } else if (type === 'action') {
       ttsCommand = 'Begin strike.';
     } else {
-      ttsCommand = 'Prepare.';
+      ttsCommand = step || 'Prepare.';
     }
+
+    const unit = type === 'instruction' ? 'none' : 'seconds';
 
     return {
       text: step,
-      duration,
+      duration: unit === 'none' ? 0 : duration,
       type,
       hint: hint || `Execute Step ${idx + 1}`,
-      loops,
-      ttsCommand
+      loops: ['inhale', 'hold', 'exhale', 'rest'].includes(type) ? (loops || 5) : undefined,
+      ttsCommand: ttsCommand || step,
+      unit,
+      waitForTTS: true
     };
   });
 }
@@ -938,6 +984,154 @@ export async function deleteMember(id: string): Promise<void> {
   const db = readLocalStorageDb();
   if (db.members) {
     db.members = db.members.filter(m => m.id !== id);
+    writeLocalStorageDb(db);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DAILY STEPS FUNCTIONS
+// ---------------------------------------------------------------------------
+
+export async function getDailyStepLogs(): Promise<DailyStepLog[]> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('daily_steps')
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (!error && data) {
+        let membersList: Member[] = [];
+        try {
+          membersList = await getMembers();
+        } catch (mErr) {
+          console.warn(mErr);
+        }
+
+        const mapped = data.map((row: any) => {
+          const uId = row.userId || row.userid || '';
+          const matchingMember = membersList.find(m => m.id === uId);
+          return {
+            id: row.id,
+            userId: uId,
+            userName: matchingMember ? matchingMember.fullName : (row.userName || row.username || 'Practitioner'),
+            userAvatar: matchingMember ? (matchingMember.avatar || '') : (row.userAvatar || row.useravatar || ''),
+            date: row.date || '',
+            steps: Number(row.steps !== undefined ? row.steps : 0),
+            caloriesBurned: row.caloriesBurned !== undefined ? Number(row.caloriesBurned) : (row.caloriesburned !== undefined ? Number(row.caloriesburned) : undefined),
+            distanceKm: row.distanceKm !== undefined ? Number(row.distanceKm) : (row.distancekm !== undefined ? Number(row.distancekm) : undefined),
+            updatedAt: row.updatedAt || row.updatedat || ''
+          };
+        });
+        return mapped as DailyStepLog[];
+      }
+    } catch (err) {
+      console.warn('Failed to query daily_steps from Supabase, falling back to LocalStorage:', err);
+    }
+  }
+  return readLocalStorageDb().dailySteps || [];
+}
+
+export async function addOrUpdateDailyStepLog(log: DailyStepLog): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      // Option 1: User's exact new table schema with camelCase and short field names (calories, distance)
+      const preferredRow = {
+        id: log.id,
+        userId: log.userId,
+        date: log.date,
+        steps: Number(log.steps) || 0,
+        calories: log.caloriesBurned !== undefined ? Number(log.caloriesBurned) : null,
+        distance: log.distanceKm !== undefined ? Number(log.distanceKm) : null,
+        updatedAt: log.updatedAt || new Date().toISOString()
+      };
+
+      let res = await supabase.from('daily_steps').upsert([preferredRow]);
+
+      // Option 2: CamelCase older schema payload (caloriesBurned, distanceKm)
+      if (res.error) {
+        console.warn('Preferred row insertion failed, trying old schema with caloriesBurned/distanceKm...', res.error.message);
+        const oldCamelRow = {
+          id: log.id,
+          userId: log.userId,
+          date: log.date,
+          steps: Number(log.steps) || 0,
+          caloriesBurned: log.caloriesBurned !== undefined ? Number(log.caloriesBurned) : null,
+          distanceKm: log.distanceKm !== undefined ? Number(log.distanceKm) : null,
+          updatedAt: log.updatedAt || new Date().toISOString()
+        };
+        res = await supabase.from('daily_steps').upsert([oldCamelRow]);
+      }
+
+      // Option 3: Lowercase variant for older schema (caloriesburned, distancekm)
+      if (res.error) {
+        console.warn('Old CamelCase failed, trying pure lowercase old schema mapping...', res.error.message);
+        const lowerRow = {
+          id: log.id,
+          userid: log.userId,
+          date: log.date,
+          steps: Number(log.steps) || 0,
+          caloriesburned: log.caloriesBurned !== undefined ? Number(log.caloriesBurned) : null,
+          distancekm: log.distanceKm !== undefined ? Number(log.distanceKm) : null,
+          updatedat: log.updatedAt || new Date().toISOString()
+        };
+        res = await supabase.from('daily_steps').upsert([lowerRow]);
+      }
+
+      // Option 4: Lowercase variant for user schema (calories, distance, userid, updatedat)
+      if (res.error) {
+        console.warn('Lowercase old-schema failed, trying lowercase direct user-schema...', res.error.message);
+        const lowerUserRow = {
+          id: log.id,
+          userid: log.userId,
+          date: log.date,
+          steps: Number(log.steps) || 0,
+          calories: log.caloriesBurned !== undefined ? Number(log.caloriesBurned) : null,
+          distance: log.distanceKm !== undefined ? Number(log.distanceKm) : null,
+          updatedat: log.updatedAt || new Date().toISOString()
+        };
+        res = await supabase.from('daily_steps').upsert([lowerUserRow]);
+      }
+      
+      if (res.error) {
+        console.error('All schema attempts failed. Supabase Daily Steps syncing error:', res.error);
+      } else {
+        console.log('Daily steps synced to Supabase successfully.');
+      }
+    } catch (err) {
+      console.warn('Supabase daily_steps failed to sync, local storage saved:', err);
+    }
+  }
+
+  const db = readLocalStorageDb();
+  if (!db.dailySteps) db.dailySteps = [];
+  
+  // Upsert in local storage list
+  const existingIdx = db.dailySteps.findIndex(s => s.id === log.id || (s.userId === log.userId && s.date === log.date));
+  if (existingIdx !== -1) {
+    db.dailySteps[existingIdx] = log;
+  } else {
+    db.dailySteps.unshift(log);
+  }
+  
+  writeLocalStorageDb(db);
+}
+
+export async function deleteDailyStepLog(id: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+       await supabase.from('daily_steps').delete().eq('id', id);
+    } catch (err) {
+      console.warn(err);
+    }
+  }
+  
+  const db = readLocalStorageDb();
+  if (db.dailySteps) {
+    db.dailySteps = db.dailySteps.filter(s => s.id !== id);
     writeLocalStorageDb(db);
   }
 }
