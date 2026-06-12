@@ -196,15 +196,15 @@ export async function autoSeedSupabaseInBrowser() {
 
 export async function getBeltLevels(): Promise<BeltLevelInfo[]> {
   const supabase = getSupabaseClient();
-  if (!supabase) return BELT_LEVELS;
+  if (!supabase) return [];
 
   const { data, error } = await supabase
     .from('belt_levels')
     .select('*')
     .order('id', { ascending: true });
 
-  if (error || !data || data.length === 0) {
-    return BELT_LEVELS;
+  if (error || !data) {
+    return [];
   }
   return data as BeltLevelInfo[];
 }
@@ -453,15 +453,15 @@ export async function addActivity(activity: Activity): Promise<void> {
 
 export async function getCategories(): Promise<Category[]> {
   const supabase = getSupabaseClient();
-  if (!supabase) return categoryTemplates;
+  if (!supabase) return [];
 
   const { data, error } = await supabase
     .from('categories')
     .select('*')
     .order('id', { ascending: true });
 
-  if (error || !data || data.length === 0) {
-    return categoryTemplates;
+  if (error || !data) {
+    return [];
   }
   return data as Category[];
 }
@@ -604,11 +604,7 @@ export function generateFallbackStepDetails(ex: Exercise): any[] {
   });
 }
 
-setTimeout(async () => {
-  if (isSupabaseActive()) {
-    await autoSeedSupabaseInBrowser();
-  }
-}, 2000);
+// Removed automatic autoSeedSupabaseInBrowser function call on load to prevent mock seeding when app starts
 
 export async function insertOrUpsertMembers(members: Member[], isUpsert = false): Promise<void> {
   const supabase = getSupabaseClient();
@@ -680,41 +676,12 @@ export async function insertOrUpsertMembers(members: Member[], isUpsert = false)
 
 export async function getMembers(): Promise<Member[]> {
   const supabase = getSupabaseClient();
-  if (!supabase) return memberTemplates;
+  if (!supabase) return [];
 
   try {
     const { data, error } = await supabase.from('members').select('*');
     
     if (!error && data) {
-      if (data.length === 0) {
-        console.log('Supabase members table is active but empty. Auto-populating with starter members...');
-        try {
-          await insertOrUpsertMembers(memberTemplates, false);
-          const refetched = await supabase.from('members').select('*');
-          if (!refetched.error && refetched.data && refetched.data.length > 0) {
-            const mapped = refetched.data.map((row: any) => ({
-              id: row.id,
-              fullName: row.fullName || row.full_name || row.fullname || '',
-              gender: row.gender || '',
-              beltLevel: Number(row.beltLevel !== undefined ? row.beltLevel : (row.belt_level !== undefined ? row.belt_level : (row.beltlevel !== undefined ? row.beltlevel : 1))),
-              birthDate: row.birthDate || row.birth_date || row.birthdate || '',
-              joinedDate: row.joinedDate || row.joined_date || row.joineddate || '',
-              phoneNumber: row.phoneNumber || row.phone_number || row.phonenumber || '',
-              height: Number(row.height !== undefined ? row.height : 0),
-              weight: Number(row.weight !== undefined ? row.weight : 0),
-              status: row.status || 'active',
-              notes: row.notes || '',
-              avatar: row.avatar || ''
-            }));
-            mapped.sort((a, b) => new Date(b.joinedDate).getTime() - new Date(a.joinedDate).getTime());
-            return mapped as Member[];
-          }
-        } catch (seedErr) {
-          console.warn('Failed to auto-seed empty Supabase members table', seedErr);
-        }
-        return memberTemplates;
-      }
-
       const mapped = data.map((row: any) => ({
         id: row.id,
         fullName: row.fullName || row.full_name || row.fullname || '',
@@ -736,7 +703,7 @@ export async function getMembers(): Promise<Member[]> {
   } catch (err: any) {
     console.warn('getMembers exception:', err.message || err);
   }
-  return memberTemplates;
+  return [];
 }
 
 export async function saveMembers(members: Member[]): Promise<void> {
